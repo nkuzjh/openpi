@@ -233,6 +233,7 @@ def main(config: _config.TrainConfig):
     ]
     wandb.log({"camera_views": images_to_log}, step=0)
 
+    import pdb; pdb.set_trace()
     train_state, train_state_sharding = init_train_state(config, init_rng, mesh, resume=resuming)
     jax.block_until_ready(train_state)
     logging.info(f"Initialized train state:\n{training_utils.array_tree_to_info(train_state.params)}")
@@ -278,3 +279,7 @@ def main(config: _config.TrainConfig):
 
 if __name__ == "__main__":
     main(_config.cli())
+
+
+# uv run scripts/compute_norm_stats.py --config-name pi05_libero
+# CUDA_VISIBLE_DEVICES=0 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_libero --exp-name=my_experiment --overwrite

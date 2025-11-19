@@ -47,6 +47,19 @@ def sample_beta(alpha, beta, bsize, device):
     beta_t = torch.as_tensor(beta, dtype=torch.float32, device=device)
     dist = torch.distributions.Beta(alpha_t, beta_t)
     return dist.sample((bsize,))
+# 逐行解释
+#   alpha_t = torch.as_tensor(alpha, ...)将 alpha 参数（通常是一个 Python 浮点数，例如 0.5）转换为一个 PyTorch 张量。
+#   beta_t = torch.as_tensor(beta, ...)将 beta 参数转换为一个 PyTorch 张量。
+#   dist = torch.distributions.Beta(alpha_t, beta_t)这是核心代码。它创建了一个 Beta 分布的实例 (object)。这个实例 "知道" 它的形状是由 alpha 和 beta 定义的。
+#   return dist.sample((bsize,))调用该分布实例的 .sample() 方法，从中抽取 bsize 个随机样本。返回的张量形状为 [bsize]，其中的每个值都是 0.0 到 1.0 之间的一个浮点数。
+# $\alpha$ 和 $\beta$ 的作用
+    # alpha 和 beta 控制着分布的“偏好”：
+    #   alpha = 1, beta = 1:这是均匀分布 (Uniform Distribution)。dist.sample() 的行为与 torch.rand(bsize) 相同（0 到 1 之间的完全随机数）。
+    #   alpha > 1, beta > 1:分布呈钟形，样本会聚集在中间（例如，alpha=5, beta=5 时，样本会聚集在 0.5 附近）。
+    #   alpha < 1, beta < 1:分布呈 U 形（浴缸形状），样本会聚集在两端（0.0 或 1.0 附近）。
+    #   alpha > beta (例如 alpha=5, beta=1):分布向右偏移，样本会聚集在 1.0 附近。
+    #   alpha < beta (例如 alpha=1, beta=5):分布向左偏移，样本会聚集在 0.0 附近。
+# 常见用途: 这个函数经常用于像 MixUp 这样的数据增强技术中，用来生成一个非均匀的混合比例（$\lambda$）。
 
 
 def make_att_2d_masks(pad_masks, att_masks):
@@ -189,6 +202,7 @@ class PI0Pytorch(nn.Module):
         """Embed images with SigLIP and language tokens with embedding layer to prepare
         for PaliGemma transformer processing.
         """
+        import pdb; pdb.set_trace()
         embs = []
         pad_masks = []
         att_masks = []
@@ -208,6 +222,7 @@ class PI0Pytorch(nn.Module):
 
             # Create attention masks so that image tokens attend to each other
             att_masks += [0] * num_img_embs
+        import pdb; pdb.set_trace()
 
         # Process language tokens
         def lang_embed_func(lang_tokens):
@@ -216,6 +231,7 @@ class PI0Pytorch(nn.Module):
             return lang_emb * math.sqrt(lang_emb_dim)
 
         lang_emb = self._apply_checkpoint(lang_embed_func, lang_tokens)
+        import pdb; pdb.set_trace()
 
         embs.append(lang_emb)
         pad_masks.append(lang_masks)
@@ -231,11 +247,13 @@ class PI0Pytorch(nn.Module):
         # Get batch size from the first dimension of the concatenated tensors
         bsize = pad_masks.shape[0]
         att_masks = att_masks[None, :].expand(bsize, len(att_masks))
+        import pdb; pdb.set_trace()
 
         return embs, pad_masks, att_masks
 
     def embed_suffix(self, state, noisy_actions, timestep):
         """Embed state, noisy_actions, timestep to prepare for Expert Gemma processing."""
+        import pdb; pdb.set_trace()
         embs = []
         pad_masks = []
         att_masks = []
@@ -260,6 +278,7 @@ class PI0Pytorch(nn.Module):
             # Set attention masks so that image and language inputs do not attend to state or actions
             att_masks += [1]
 
+        import pdb; pdb.set_trace()
         # Embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
         time_emb = create_sinusoidal_pos_embedding(
             timestep, self.action_in_proj.out_features, min_period=4e-3, max_period=4.0, device=timestep.device
@@ -269,9 +288,10 @@ class PI0Pytorch(nn.Module):
         # Fuse timestep + action information using an MLP
         def action_proj_func(noisy_actions):
             return self.action_in_proj(noisy_actions)
-
+        import pdb; pdb.set_trace()
         action_emb = self._apply_checkpoint(action_proj_func, noisy_actions)
 
+        import pdb; pdb.set_trace()
         if not self.pi05:
             time_emb = time_emb[:, None, :].expand_as(action_emb)
             action_time_emb = torch.cat([action_emb, time_emb], dim=2)
@@ -296,6 +316,7 @@ class PI0Pytorch(nn.Module):
             action_time_emb = action_emb
             adarms_cond = time_emb
 
+        import pdb; pdb.set_trace()
         # Add to input tokens
         embs.append(action_time_emb)
 
@@ -310,24 +331,30 @@ class PI0Pytorch(nn.Module):
         pad_masks = torch.cat(pad_masks, dim=1)
         att_masks = torch.tensor(att_masks, dtype=embs.dtype, device=embs.device)
         att_masks = att_masks[None, :].expand(bsize, len(att_masks))
+        import pdb; pdb.set_trace()
 
         return embs, pad_masks, att_masks, adarms_cond
 
-    def forward(self, observation, actions, noise=None, time=None) -> Tensor:
+    def forward(self, observation, actions, noise=None, time=None) -> Tensor: #actions.shape=torch.Size([2, 50, 32])
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
-        images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=True)
+        import pdb; pdb.set_trace()
+        images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=True) #images=[torch.Size([2, 224, 224, 3]), torch.Size([2, 224, 224, 3]), torch.Size([2, 224, 224, 3])] img_masks=[torch.Size([2]), torch.Size([2]), torch.Size([2])]  lang_tokens.shape=torch.Size([2, 200] lang_masks.shape=torch.Size([2, 200]) #state.shape=torch.Size([2, 32])
 
         if noise is None:
-            noise = self.sample_noise(actions.shape, actions.device)
+            import pdb; pdb.set_trace()
+            noise = self.sample_noise(actions.shape, actions.device) # actions.shape 的(0,1)正态分布 noise  #noise.shape=torch.Size([2, 50, 32])
 
         if time is None:
-            time = self.sample_time(actions.shape[0], actions.device)
+            import pdb; pdb.set_trace()
+            time = self.sample_time(actions.shape[0], actions.device) # 返回bs=actions.shape[0]的time向量, beta(1.5,1)采样 + 0.001 smooth, 是一个略微向1.0偏的均匀分布 #time.shape=torch.Size([2])
 
-        time_expanded = time[:, None, None]
-        x_t = time_expanded * noise + (1 - time_expanded) * actions
-        u_t = noise - actions
+        time_expanded = time[:, None, None] #扩充两个维度 #time_expanded.shape=torch.Size([2, 1, 1])
+        x_t = time_expanded * noise + (1 - time_expanded) * actions # 带噪声的中间向量x_t # x_t.shape=torch.Size([2, 50, 32])
+        u_t = noise - actions # 需要模型预测的噪声(velocity field / 速度场) #u_t.shape=torch.Size([2, 50, 32])
 
+        import pdb; pdb.set_trace()
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
+        import pdb; pdb.set_trace()
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(state, x_t, time)
         if (
             self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
@@ -339,14 +366,17 @@ class PI0Pytorch(nn.Module):
         pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
         att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
 
+        import pdb; pdb.set_trace()
         att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
         position_ids = torch.cumsum(pad_masks, dim=1) - 1
 
         # Prepare attention masks
+        import pdb; pdb.set_trace()
         att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks)
 
         # Apply gradient checkpointing if enabled
         def forward_func(prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond):
+            import pdb; pdb.set_trace()
             (_, suffix_out), _ = self.paligemma_with_expert.forward(
                 attention_mask=att_2d_masks_4d,
                 position_ids=position_ids,
@@ -355,8 +385,10 @@ class PI0Pytorch(nn.Module):
                 use_cache=False,
                 adarms_cond=[None, adarms_cond],
             )
+            import pdb; pdb.set_trace()
             return suffix_out
 
+        import pdb; pdb.set_trace()
         suffix_out = self._apply_checkpoint(
             forward_func, prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond
         )
@@ -368,6 +400,7 @@ class PI0Pytorch(nn.Module):
         def action_out_proj_func(suffix_out):
             return self.action_out_proj(suffix_out)
 
+        import pdb; pdb.set_trace()
         v_t = self._apply_checkpoint(action_out_proj_func, suffix_out)
 
         return F.mse_loss(u_t, v_t, reduction="none")
@@ -376,20 +409,25 @@ class PI0Pytorch(nn.Module):
     def sample_actions(self, device, observation, noise=None, num_steps=10) -> Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         bsize = observation.state.shape[0]
+        import pdb; pdb.set_trace()
         if noise is None:
             actions_shape = (bsize, self.config.action_horizon, self.config.action_dim)
             noise = self.sample_noise(actions_shape, device)
 
+        import pdb; pdb.set_trace()
         images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=False)
 
+        import pdb; pdb.set_trace()
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
         # Compute image and language key value cache
+        import pdb; pdb.set_trace()
         prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
         self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
 
+        import pdb; pdb.set_trace()
         _, past_key_values = self.paligemma_with_expert.forward(
             attention_mask=prefix_att_2d_masks_4d,
             position_ids=prefix_position_ids,
@@ -403,6 +441,7 @@ class PI0Pytorch(nn.Module):
 
         x_t = noise
         time = torch.tensor(1.0, dtype=torch.float32, device=device)
+        import pdb; pdb.set_trace()
         while time >= -dt / 2:
             expanded_time = time.expand(bsize)
             v_t = self.denoise_step(
@@ -416,6 +455,7 @@ class PI0Pytorch(nn.Module):
             # Euler step - use new tensor assignment instead of in-place operation
             x_t = x_t + dt * v_t
             time += dt
+        import pdb; pdb.set_trace()
         return x_t
 
     def denoise_step(
@@ -427,6 +467,7 @@ class PI0Pytorch(nn.Module):
         timestep,
     ):
         """Apply one denoising step of the noise `x_t` at a given timestep."""
+        import pdb; pdb.set_trace()
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(state, x_t, timestep)
 
         suffix_len = suffix_pad_masks.shape[1]
@@ -435,6 +476,7 @@ class PI0Pytorch(nn.Module):
 
         prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
 
+        import pdb; pdb.set_trace()
         suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
 
         full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
@@ -443,9 +485,11 @@ class PI0Pytorch(nn.Module):
         position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
 
         # Prepare attention masks
+        import pdb; pdb.set_trace()
         full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
         self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"  # noqa: SLF001
 
+        import pdb; pdb.set_trace()
         outputs_embeds, _ = self.paligemma_with_expert.forward(
             attention_mask=full_att_2d_masks_4d,
             position_ids=position_ids,
@@ -458,4 +502,5 @@ class PI0Pytorch(nn.Module):
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.action_horizon :]
         suffix_out = suffix_out.to(dtype=torch.float32)
+        import pdb; pdb.set_trace()
         return self.action_out_proj(suffix_out)
