@@ -202,58 +202,58 @@ class PI0Pytorch(nn.Module):
         """Embed images with SigLIP and language tokens with embedding layer to prepare
         for PaliGemma transformer processing.
         """
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         embs = []
         pad_masks = []
         att_masks = []
 
         # Process images
-        for img, img_mask in zip(images, img_masks, strict=True):
+        for img, img_mask in zip(images, img_masks, strict=True):# images[0].shape=torch.Size([2, 3, 224, 224]) images[1].shape=torch.Size([2, 3, 224, 224]) images[2].shape=torch.Size([2, 3, 224, 224]) #img_masks = [tensor([True, True], device='cuda:0'), tensor([True, True], device='cuda:0'), tensor([False, False], device='cuda:0')]
 
             def image_embed_func(img):
                 return self.paligemma_with_expert.embed_image(img)
 
-            img_emb = self._apply_checkpoint(image_embed_func, img)
+            img_emb = self._apply_checkpoint(image_embed_func, img)#img_emb=torch.Size([2, 256, 2048])
 
             bsize, num_img_embs = img_emb.shape[:2]
 
             embs.append(img_emb)
-            pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
+            pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))# img_mask.shape=torch.Size([2])#img_mask[:, None].expand(bsize, num_img_embs)=torch.Size([2,256])
 
             # Create attention masks so that image tokens attend to each other
-            att_masks += [0] * num_img_embs
-        import pdb; pdb.set_trace()
+            att_masks += [0] * num_img_embs #[0 for _ in num_img_embs]
+        # import pdb; pdb.set_trace() #att_masks = [0] * num_img_embs * len(images)
 
         # Process language tokens
         def lang_embed_func(lang_tokens):
             lang_emb = self.paligemma_with_expert.embed_language_tokens(lang_tokens)
             lang_emb_dim = lang_emb.shape[-1]
-            return lang_emb * math.sqrt(lang_emb_dim)
+            return lang_emb * math.sqrt(lang_emb_dim)#这段代码是在执行 Transformer 模型的标准操作，目的是稳定梯度并防止模型训练发散 (divergence)。这个操作被称为输入嵌入缩放 (Input Embedding Scaling)。核心目的：保持方差一致性 (Variance Consistency).在所有的 Transformer 模型中（包括 Llama, Gemma, 您的 PaliGemma 模型），有一个基本要求：流经网络各层的信号强度（方差）需要保持在一个稳定的范围内。如果不进行缩放，方差会随着维度增加而爆炸式增长，导致模型内部的数值溢出，使训练不稳定或无法收敛。#lang_emb.shape[-1]=2048 #math.sqrt(lang_emb.shape[-1])=45.254833995939045
 
-        lang_emb = self._apply_checkpoint(lang_embed_func, lang_tokens)
-        import pdb; pdb.set_trace()
+        lang_emb = self._apply_checkpoint(lang_embed_func, lang_tokens)#lang_tokens=torch.Size([2, 200]) #lang_emb.shape=torch.Size([2, 200, 2048])
+        # import pdb; pdb.set_trace()
 
         embs.append(lang_emb)
-        pad_masks.append(lang_masks)
+        pad_masks.append(lang_masks)#lang_masks=torch.Size([2, 200])
 
         # full attention between image and language inputs
         num_lang_embs = lang_emb.shape[1]
-        att_masks += [0] * num_lang_embs
+        att_masks += [0] * num_lang_embs#968=256*3+200
 
-        embs = torch.cat(embs, dim=1)
-        pad_masks = torch.cat(pad_masks, dim=1)
+        embs = torch.cat(embs, dim=1)#torch.Size([2, 968, 2048])
+        pad_masks = torch.cat(pad_masks, dim=1)#torch.Size([2, 968])=256*3+200
         att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
 
         # Get batch size from the first dimension of the concatenated tensors
         bsize = pad_masks.shape[0]
-        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
-        import pdb; pdb.set_trace()
+        att_masks = att_masks[None, :].expand(bsize, len(att_masks))##att_masks = 968 -> torch.Size([2, 968])
+        # import pdb; pdb.set_trace()
 
         return embs, pad_masks, att_masks
 
     def embed_suffix(self, state, noisy_actions, timestep):
         """Embed state, noisy_actions, timestep to prepare for Expert Gemma processing."""
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()##state.shape=torch.Size([2, 32]) #noisy_actions.shape=torch.Size([2, 10, 32]) #timestep.shape=torch.Size([2])
         embs = []
         pad_masks = []
         att_masks = []
@@ -278,20 +278,20 @@ class PI0Pytorch(nn.Module):
             # Set attention masks so that image and language inputs do not attend to state or actions
             att_masks += [1]
 
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         # Embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
         time_emb = create_sinusoidal_pos_embedding(
             timestep, self.action_in_proj.out_features, min_period=4e-3, max_period=4.0, device=timestep.device
-        )
-        time_emb = time_emb.type(dtype=timestep.dtype)
+        ) #self.action_in_proj.out_features=1024
+        time_emb = time_emb.type(dtype=timestep.dtype) #time_emb=torch.Size([2, 1024])
 
         # Fuse timestep + action information using an MLP
         def action_proj_func(noisy_actions):
-            return self.action_in_proj(noisy_actions)
-        import pdb; pdb.set_trace()
-        action_emb = self._apply_checkpoint(action_proj_func, noisy_actions)
+            return self.action_in_proj(noisy_actions)#Linear(in_features=32, out_features=1024, bias=True)
+        # import pdb; pdb.set_trace()
+        action_emb = self._apply_checkpoint(action_proj_func, noisy_actions)#action_emb = torch.Size([2, 10, 32]) -> torch.Size([2, 10, 1024])
 
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         if not self.pi05:
             time_emb = time_emb[:, None, :].expand_as(action_emb)
             action_time_emb = torch.cat([action_emb, time_emb], dim=2)
@@ -307,55 +307,62 @@ class PI0Pytorch(nn.Module):
         else:
             # time MLP (for adaRMS)
             def time_mlp_func(time_emb):
-                x = self.time_mlp_in(time_emb)
+                x = self.time_mlp_in(time_emb)#Linear(in_features=1024, out_features=1024, bias=True)
                 x = F.silu(x)  # swish == silu
-                x = self.time_mlp_out(x)
+                x = self.time_mlp_out(x)#Linear(in_features=1024, out_features=1024, bias=True)
                 return F.silu(x)
 
-            time_emb = self._apply_checkpoint(time_mlp_func, time_emb)
-            action_time_emb = action_emb
-            adarms_cond = time_emb
+            time_emb = self._apply_checkpoint(time_mlp_func, time_emb)#torch.Size([2, 1024])
+            action_time_emb = action_emb#torch.Size([2, 10, 1024])
+            adarms_cond = time_emb#torch.Size([2, 1024])
 
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         # Add to input tokens
         embs.append(action_time_emb)
 
         bsize, action_time_dim = action_time_emb.shape[:2]
-        action_time_mask = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=timestep.device)
-        pad_masks.append(action_time_mask)
+        action_time_mask = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=timestep.device) #torch.Size([2, 10])
+        pad_masks.append(action_time_mask) #[ torch.Size([2, 10]) ]
 
         # Set attention masks so that image, language and state inputs do not attend to action tokens
-        att_masks += [1] + ([0] * (self.config.action_horizon - 1))
+        att_masks += [1] + ([0] * (self.config.action_horizon - 1))#att_masks=[1, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
-        embs = torch.cat(embs, dim=1)
-        pad_masks = torch.cat(pad_masks, dim=1)
+        embs = torch.cat(embs, dim=1) #torch.Size([2, 10, 1024])
+        pad_masks = torch.cat(pad_masks, dim=1) #torch.Size([2, 10])
         att_masks = torch.tensor(att_masks, dtype=embs.dtype, device=embs.device)
-        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
-        import pdb; pdb.set_trace()
+        att_masks = att_masks[None, :].expand(bsize, len(att_masks)) #torch.Size([2, 10])
+        # import pdb; pdb.set_trace()
 
         return embs, pad_masks, att_masks, adarms_cond
 
-    def forward(self, observation, actions, noise=None, time=None) -> Tensor: #actions.shape=torch.Size([2, 50, 32])
+    def forward(self, observation, actions, noise=None, time=None) -> Tensor: #actions.shape=torch.Size([2, 10, 32])
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=True) #images=[torch.Size([2, 224, 224, 3]), torch.Size([2, 224, 224, 3]), torch.Size([2, 224, 224, 3])] img_masks=[torch.Size([2]), torch.Size([2]), torch.Size([2])]  lang_tokens.shape=torch.Size([2, 200] lang_masks.shape=torch.Size([2, 200]) #state.shape=torch.Size([2, 32])
 
         if noise is None:
-            import pdb; pdb.set_trace()
-            noise = self.sample_noise(actions.shape, actions.device) # actions.shape 的(0,1)正态分布 noise  #noise.shape=torch.Size([2, 50, 32])
+            # import pdb; pdb.set_trace()
+            noise = self.sample_noise(actions.shape, actions.device) # actions.shape 的(0,1)正态分布 noise  #noise.shape=torch.Size([2, 10, 32])
 
         if time is None:
-            import pdb; pdb.set_trace()
+            # import pdb; pdb.set_trace()
             time = self.sample_time(actions.shape[0], actions.device) # 返回bs=actions.shape[0]的time向量, beta(1.5,1)采样 + 0.001 smooth, 是一个略微向1.0偏的均匀分布 #time.shape=torch.Size([2])
 
         time_expanded = time[:, None, None] #扩充两个维度 #time_expanded.shape=torch.Size([2, 1, 1])
-        x_t = time_expanded * noise + (1 - time_expanded) * actions # 带噪声的中间向量x_t # x_t.shape=torch.Size([2, 50, 32])
-        u_t = noise - actions # 需要模型预测的噪声(velocity field / 速度场) #u_t.shape=torch.Size([2, 50, 32])
+        x_t = time_expanded * noise + (1 - time_expanded) * actions # 带噪声的中间向量x_t # x_t.shape=torch.Size([2, 10, 32])
+        u_t = noise - actions # 需要模型预测的噪声(velocity field / 速度场) #u_t.shape=torch.Size([2, 10, 32])
 
-        import pdb; pdb.set_trace()
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
-        import pdb; pdb.set_trace()
-        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(state, x_t, time)
+        # import pdb; pdb.set_trace()
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks)#images=[torch.Size([2, 224, 224, 3]), torch.Size([2, 224, 224, 3]), torch.Size([2, 224, 224, 3])] img_masks=[torch.Size([2]), torch.Size([2]), torch.Size([2])] lang_tokens.shape=torch.Size([2, 200] lang_masks.shape=torch.Size([2, 200])
+        # prefix_embs=torch.Size([2, 968, 2048])
+        # prefix_pad_masks.shape=torch.Size([2, 968])
+        # prefix_att_masks.shape=torch.Size([2, 968])
+        # import pdb; pdb.set_trace()
+        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(state, x_t, time) #state.shape=torch.Size([2, 32]) #x_t.shape=torch.Size([2, 10, 32]) #time.shape=torch.Size([2])
+        # (Pdb) suffix_embs.shape=torch.Size([2, 10, 1024])
+        # (Pdb) suffix_pad_masks.shape=torch.Size([2, 10])
+        # (Pdb) suffix_att_masks.shape=torch.Size([2, 10])
+        # (Pdb) adarms_cond.shape=torch.Size([2, 1024])
         if (
             self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
             == torch.bfloat16
@@ -363,20 +370,19 @@ class PI0Pytorch(nn.Module):
             suffix_embs = suffix_embs.to(dtype=torch.bfloat16)
             prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
 
-        pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
-        att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
+        pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)#torch.Size([2, 978]) = torch.Size([2, 968]) + torch.Size([2, 10])
+        att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)#torch.Size([2, 978]) = torch.Size([2, 968]) + torch.Size([2, 10])
 
-        import pdb; pdb.set_trace()
-        att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
-        position_ids = torch.cumsum(pad_masks, dim=1) - 1
+        # import pdb; pdb.set_trace()
+        att_2d_masks = make_att_2d_masks(pad_masks, att_masks)#torch.Size([2, 978, 978])
+        position_ids = torch.cumsum(pad_masks, dim=1) - 1 #torch.Size([2, 978]) #除了=False的pad_mask之外,正常token按照seq顺序的postion_id; pad token和前面的正常token保持一致的postion_id
 
         # Prepare attention masks
-        import pdb; pdb.set_trace()
-        att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks)
+        # import pdb; pdb.set_trace()
+        att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks)#torch.Size([2, 1, 978, 978])
 
         # Apply gradient checkpointing if enabled
         def forward_func(prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond):
-            import pdb; pdb.set_trace()
             (_, suffix_out), _ = self.paligemma_with_expert.forward(
                 attention_mask=att_2d_masks_4d,
                 position_ids=position_ids,
@@ -385,49 +391,47 @@ class PI0Pytorch(nn.Module):
                 use_cache=False,
                 adarms_cond=[None, adarms_cond],
             )
-            import pdb; pdb.set_trace()
             return suffix_out
-
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         suffix_out = self._apply_checkpoint(
             forward_func, prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond
-        )
+        ) #suffix_out=torch.Size([2, 10, 1024]) #prefix_embs=torch.Size([2, 968]), suffix_embs=torch.Size([2, 10, 1024]), att_2d_masks_4d=torch.Size([2, 1, 978, 978]), position_ids.shape=torch.Size([2, 978]), adarms_cond.shape=torch.Size([2, 1024])
 
         suffix_out = suffix_out[:, -self.config.action_horizon :]
         suffix_out = suffix_out.to(dtype=torch.float32)
 
         # Apply gradient checkpointing to final action projection if enabled
         def action_out_proj_func(suffix_out):
-            return self.action_out_proj(suffix_out)
+            return self.action_out_proj(suffix_out)#Linear(in_features=1024, out_features=32, bias=True)
 
-        import pdb; pdb.set_trace()
-        v_t = self._apply_checkpoint(action_out_proj_func, suffix_out)
-
-        return F.mse_loss(u_t, v_t, reduction="none")
+        # import pdb; pdb.set_trace()
+        v_t = self._apply_checkpoint(action_out_proj_func, suffix_out)#suffix_out=torch.Size([2, 10, 1024]) -> v_t=torch.Size([2, 10, 32])
+        # import pdb; pdb.set_trace()
+        return F.mse_loss(u_t, v_t, reduction="none")#F.mse_loss(...)=torch.Size([2, 10, 32])
 
     @torch.no_grad()
     def sample_actions(self, device, observation, noise=None, num_steps=10) -> Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         bsize = observation.state.shape[0]
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         if noise is None:
             actions_shape = (bsize, self.config.action_horizon, self.config.action_dim)
             noise = self.sample_noise(actions_shape, device)
 
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=False)
 
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
         # Compute image and language key value cache
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
         self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
 
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         _, past_key_values = self.paligemma_with_expert.forward(
             attention_mask=prefix_att_2d_masks_4d,
             position_ids=prefix_position_ids,
@@ -441,7 +445,7 @@ class PI0Pytorch(nn.Module):
 
         x_t = noise
         time = torch.tensor(1.0, dtype=torch.float32, device=device)
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         while time >= -dt / 2:
             expanded_time = time.expand(bsize)
             v_t = self.denoise_step(
@@ -455,7 +459,7 @@ class PI0Pytorch(nn.Module):
             # Euler step - use new tensor assignment instead of in-place operation
             x_t = x_t + dt * v_t
             time += dt
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         return x_t
 
     def denoise_step(
@@ -467,7 +471,7 @@ class PI0Pytorch(nn.Module):
         timestep,
     ):
         """Apply one denoising step of the noise `x_t` at a given timestep."""
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(state, x_t, timestep)
 
         suffix_len = suffix_pad_masks.shape[1]
@@ -476,7 +480,7 @@ class PI0Pytorch(nn.Module):
 
         prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
 
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
 
         full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
@@ -485,11 +489,11 @@ class PI0Pytorch(nn.Module):
         position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
 
         # Prepare attention masks
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
         self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"  # noqa: SLF001
 
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         outputs_embeds, _ = self.paligemma_with_expert.forward(
             attention_mask=full_att_2d_masks_4d,
             position_ids=position_ids,
@@ -502,5 +506,5 @@ class PI0Pytorch(nn.Module):
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.action_horizon :]
         suffix_out = suffix_out.to(dtype=torch.float32)
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         return self.action_out_proj(suffix_out)

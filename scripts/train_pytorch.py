@@ -506,7 +506,7 @@ def train_loop(config: _config.TrainConfig):
         else None
     )
 
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
     while global_step < config.num_train_steps:
         # Set epoch for distributed training
         if use_ddp and hasattr(loader, "set_epoch"):
@@ -558,6 +558,7 @@ def train_loop(config: _config.TrainConfig):
                 pg["lr"] = lr_schedule(global_step)
 
             # Forward pass
+            # import pdb; pdb.set_trace()
             losses = model(observation, actions)
             # Ensure losses is a tensor and handle different return types
             if isinstance(losses, list | tuple):
@@ -565,6 +566,7 @@ def train_loop(config: _config.TrainConfig):
             elif not isinstance(losses, torch.Tensor):
                 losses = torch.tensor(losses, device=device, dtype=torch.float32)
 
+            # import pdb; pdb.set_trace()
             loss = losses.mean()
 
             # Backward pass

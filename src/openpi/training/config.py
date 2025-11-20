@@ -751,6 +751,7 @@ _CONFIGS = [
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
         pytorch_weight_path="/home/jiahao/.cache/openpi/openpi-assets/checkpoints/pi05_base",#"/path/to/your/pytorch_weight_path",
         num_train_steps=30_000,
+        save_interval=10_000,
     ),
     #
     # Fine-tuning Aloha configs.
