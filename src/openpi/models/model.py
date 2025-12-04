@@ -87,6 +87,8 @@ class Observation(Generic[ArrayT]):
     that should be produced by the data transforms.
     """
 
+    map_ids: at.Int[ArrayT, "*b"]
+
     # Images, in [-1, 1] float32.
     images: dict[str, at.Float[ArrayT, "*b h w c"]]
     # Image masks, with same keys as images.
@@ -121,11 +123,12 @@ class Observation(Generic[ArrayT]):
         return cls(
             images=data["image"],
             image_masks=data["image_mask"],
-            state=data["state"],
+            state=data["state"] if "state" in data else None,
             tokenized_prompt=data.get("tokenized_prompt"),
             tokenized_prompt_mask=data.get("tokenized_prompt_mask"),
             token_ar_mask=data.get("token_ar_mask"),
             token_loss_mask=data.get("token_loss_mask"),
+            map_ids=data.get("map_id"),
         )
 
     def to_dict(self) -> at.PyTree[ArrayT]:

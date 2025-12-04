@@ -281,5 +281,3 @@ if __name__ == "__main__":
     main(_config.cli())
 
 
-# uv run scripts/compute_norm_stats.py --config-name pi05_libero
-# CUDA_VISIBLE_DEVICES=0 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_libero --exp-name=my_experiment --overwrite

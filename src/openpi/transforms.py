@@ -69,6 +69,16 @@ class CompositeTransform(DataTransformFn):
         for transform in self.transforms:
             data = transform(data)
         return data
+    # 在create_torch_data_loader.create_torch_dataset中有一个transform_dataset的初始化;create_torch_dataset创建完dataset后,在create_torch_data_loader中还有transform_dataset.
+    # 这两个transform_dataset中,第一个是用来提取task作为prompt,第二个是根据LeRobotCsgoDataConfig.create从dataset.data中获取对应的key:value组成sample_batch的, 也包括prompt->prompt_token_ids的过程.
+
+    # self.transforms =  [PromptFromLeRobotTask(tasks={0: 'put the white mug on the left plate and put the yell...ooden cabinet and place it on the plate'})]
+    # data.keys() = dict_keys(['image', 'wrist_image', 'state', 'actions', 'timestamp', 'frame_index', 'episode_index', 'index', 'task_index', 'actions_is_pad', 'task', 'prompt'])
+
+    # self.transforms=[RepackTransform(structure={'observation/image': 'image', 'observation/wrist_image': '...'actions': 'actions', 'prompt': 'prompt'}), LiberoInputs(model_type=<ModelType.PI05: 'pi05'>), Normalize(norm_stats={'state': NormStats(mean=array([-0.04651536,  0.03437928,  0.764...   ]))}, use_quantiles=True, strict=False), InjectDefaultPrompt(prompt=None), ResizeImages(height=224, width=224), TokenizePrompt(tokenizer=<openpi.models.tokenizer.PaligemmaTokenizer object at 0x790ec4f03410>, discrete_state_input=False), PadStatesAndActions(model_action_dim=32)]
+    # data.keys() = dict_keys(['state', 'image', 'image_mask', 'actions', 'tokenized_prompt', 'tokenized_prompt_mask'])
+
+
 
 
 def compose(transforms: Sequence[DataTransformFn]) -> DataTransformFn:
@@ -331,7 +341,8 @@ class PadStatesAndActions(DataTransformFn):
     model_action_dim: int
 
     def __call__(self, data: DataDict) -> DataDict:
-        data["state"] = pad_to_dim(data["state"], self.model_action_dim, axis=-1)
+        if "state" in data:
+            data["state"] = pad_to_dim(data["state"], self.model_action_dim, axis=-1)
         if "actions" in data:
             data["actions"] = pad_to_dim(data["actions"], self.model_action_dim, axis=-1)
         return data

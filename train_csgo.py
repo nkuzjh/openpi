@@ -48,7 +48,7 @@ import openpi.training.data_loader as _data
 
 
 
-from datasets.localization_dataset import id_to_map_dict, map_to_id_dict, LocVLATokenTrainDataset, LocVLATokenEvalDataset
+from csgo_datasets.localization_dataset import id_to_map_dict, map_to_id_dict, CsgoTrainDataset_IT, CsgoEvalDataset_IT
 from loc_tokenizer import LocTokenizer
 
 
@@ -63,7 +63,7 @@ def init_logging():
 
     formatter = CustomFormatter(
         fmt="%(asctime)s.%(msecs)03d [%(levelname)s] %(message)-80s (%(process)d:%(filename)s:%(lineno)s)",
-        datefmt="%H:%M:%S",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
@@ -312,6 +312,128 @@ def log_memory_usage(device, step, phase="unknown"):
     )
 
 
+import torch
+import matplotlib.pyplot as plt
+import numpy as np
+from typing import Dict, Any
+from torchvision import transforms
+
+# --- Configuration for De-normalization ---
+# These must match the mean and std used in your dataset's get_transform method.
+# Values from your code: mean=[0.48145466, 0.4578275, 0.40821073], std=[0.26862954, 0.26130258, 0.27577711]
+IMAGENET_MEAN = [0.48145466, 0.4578275, 0.40821073]
+IMAGENET_STD = [0.26862954, 0.26130258, 0.27577711]
+
+def denormalize(tensor: torch.Tensor) -> np.ndarray:
+    """
+    Reverses the ImageNet normalization applied to a tensor image.
+    Args:
+        tensor: Normalized image tensor of shape (C, H, W)
+    Returns:
+        numpy array of shape (H, W, C) with values in [0, 1]
+    """
+    # Clone to avoid modifying the original batch
+    t = tensor.clone().detach().cpu()
+
+    mean = torch.tensor(IMAGENET_MEAN).view(3, 1, 1)
+    std = torch.tensor(IMAGENET_STD).view(3, 1, 1)
+
+    # Reverse normalization: x = z * std + mean
+    t = t * std + mean
+
+    # Clamp values to valid image range [0, 1]
+    t = torch.clamp(t, 0, 1)
+
+    # Convert (C, H, W) -> (H, W, C) for matplotlib
+    return t.permute(1, 2, 0).numpy()
+
+def visualize_csgo_batch(batch: Dict[str, Any], max_samples: int = 4):
+    """
+    Visualizes a batch of data from the CsgoTrainDataset_IT dataloader.
+
+    Args:
+        batch: A dictionary containing the batch data ('image', 'wrist_image', 'prompt', 'actions', 'map_id').
+        max_samples: Maximum number of samples to visualize from the batch.
+    """
+
+    # Unpack batch data
+    observation, action = batch
+    images = observation.images['base_0_rgb']           # (B, C, H, W)
+    wrist_images = observation.images['left_wrist_0_rgb'] # (B, C, H, W)
+    tokenized_prompt = observation.tokenized_prompt         # List or Tuple of strings
+    state = observation.state
+    map_ids = observation.map_ids         # (B,)
+    actions = action.squeeze(1)        # (B, 1, 5) -> (B, 5)=[x, y, z, angle_v, angle_h]
+
+    batch_size = images.shape[0]
+    num_samples = min(batch_size, max_samples)
+
+    # Create a figure with 2 columns (FPS view, Map view) and num_samples rows
+    fig, axes = plt.subplots(num_samples, 2, figsize=(12, 4 * num_samples))
+
+    # Handle the case where batch_size=1 (axes is 1D array)
+    if num_samples == 1:
+        axes = axes.reshape(1, -1)
+
+    plt.suptitle(f"Batch Visualization (First {num_samples} samples)", fontsize=16)
+
+    for i in range(num_samples):
+        # --- 1. Process Images ---
+        fps_img = denormalize(images[i])
+        map_img = denormalize(wrist_images[i])
+
+        # --- 2. Get Info ---
+        # Action: [x_norm, y_norm, z_norm, v_norm, h_norm]
+        act = actions[i].cpu().numpy()
+        # # Map ID
+        # mid = map_ids[i].item()
+        # # Prompt (truncated for display if too long)
+        # prompt_text = prompts[i]
+        # if len(prompt_text) > 60:
+        #     prompt_text = prompt_text[:57] + "..."
+
+        # --- 3. Plot FPS View (Left) ---
+        ax_fps = axes[i, 0]
+        ax_fps.imshow(fps_img)
+        # ax_fps.set_title(f"FPS View\nMap ID: {mid}", fontsize=10, fontweight='bold')
+        ax_fps.axis('off')
+
+        # # Add prompt text below image
+        # ax_fps.text(0.5, -0.1, f"Prompt: {prompt_text}",
+        #            transform=ax_fps.transAxes, ha='center', fontsize=9, wrap=True)
+
+        # --- 4. Plot Map View (Right) ---
+        ax_map = axes[i, 1]
+        ax_map.imshow(map_img)
+
+        # Annotate Action Coordinates on Map
+        # Note: 'act' contains normalized coordinates. We need image dimensions to plot points.
+        h, w, _ = map_img.shape
+        # Assuming x corresponds to width (1024 original) and y to height (1024 original)
+        # Since data['x'] / 1024 was the normalization logic.
+        x_pixel = act[0] * w
+        y_pixel = act[1] * h
+
+        # Draw the ground truth point
+        ax_map.scatter(x_pixel, y_pixel, c='red', s=100, marker='x', label='GT Position')
+        ax_map.legend(loc='upper right', fontsize=8)
+
+        # Title with action values
+        action_str = f"Action: [x={act[0]:.2f}, y={act[1]:.2f}, z={act[2]:.2f}, v={act[3]:.2f}, h={act[4]:.2f}]"
+        ax_map.set_title(f"Map View (Wrist)\n{action_str}", fontsize=10)
+        ax_map.axis('off')
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.97]) # Adjust layout to make room for suptitle
+    # plt.show()
+    plt.savefig('_vis_csgo_batch.png')
+
+# --- Example Usage ---
+# Assuming you have instantiated your dataloader as `train_loader`
+#
+# batch = next(iter(train_loader))
+# visualize_csgo_batch(batch)
+
+
 def train_loop(config: _config.TrainConfig):
     use_ddp, local_rank, device = setup_ddp()
     is_main = (not use_ddp) or (dist.get_rank() == 0)
@@ -363,6 +485,22 @@ def train_loop(config: _config.TrainConfig):
 
     # Pass the original batch size to data loader - it will handle DDP splitting internally
     loader, data_config = build_datasets(config)
+
+    batch_sample = next(iter(loader)) #tuple(Observation[Object], action[Tensor, bs,10,32])
+    logging.info("\nbatch_sample:")
+    logging.info(batch_sample[0])
+    logging.info(batch_sample[1])
+    logging.info("\n")
+    visualize_csgo_batch(batch_sample, max_samples=4)
+    # observation.__dict__.keys() = dict_keys(['images', 'image_masks', 'state', 'tokenized_prompt', 'tokenized_prompt_mask', 'token_ar_mask', 'token_loss_mask'])
+    # observation.images.keys() = dict_keys(['base_0_rgb', 'left_wrist_0_rgb', 'right_wrist_0_rgb']) # base,left,right = torch.Size([2, 3, 224, 224])
+    # observation.image_masks = {'base_0_rgb': tensor([True, True]), 'left_wrist_0_rgb': tensor([True, True]), 'right_wrist_0_rgb': tensor([False, False])} # 每张图片的两个mask值T/F分别代表
+    # observation.state.shape = torch.Size([2, 32])
+    # observation.tokenized_prompt.shape = torch.Size([2, 200])
+    # observation.tokenized_prompt_mask.shape = torch.Size([2, 200])
+    # observation.token_ar_mask = None
+    # observation.token_loss_mask = None
+
 
     # Log sample images to wandb on first batch
     if is_main and config.wandb_enabled and not resuming:
@@ -671,29 +809,3 @@ def main():
 if __name__ == "__main__":
     main()
 
-
-# # Single GPU training:
-# uv run scripts/train_pytorch.py <config_name> --exp_name <run_name> --save_interval <interval>
-
-# # Example:
-# uv run scripts/train_pytorch.py debug --exp_name pytorch_test
-# uv run scripts/train_pytorch.py debug --exp_name pytorch_test --resume  # Resume from latest checkpoint
-# CUDA_VISIBLE_DEVICES=0 uv run scripts/train_pytorch.py debug_pi05 --exp_name pytorch_test
-# CUDA_VISIBLE_DEVICES=0 uv run scripts/train_pytorch.py pi05_libero --exp_name pytorch_test
-
-
-# # Multi-GPU training (single node):
-# uv run torchrun --standalone --nnodes=1 --nproc_per_node=<num_gpus> scripts/train_pytorch.py <config_name> --exp_name <run_name>
-
-# # Example:
-# uv run torchrun --standalone --nnodes=1 --nproc_per_node=2 scripts/train_pytorch.py pi0_aloha_sim --exp_name pytorch_ddp_test
-# uv run torchrun --standalone --nnodes=1 --nproc_per_node=2 scripts/train_pytorch.py pi0_aloha_sim --exp_name pytorch_ddp_test --resume
-
-# # Multi-Node Training:
-# uv run torchrun \
-#     --nnodes=<num_nodes> \
-#     --nproc_per_node=<gpus_per_node> \
-#     --node_rank=<rank_of_node> \
-#     --master_addr=<master_ip> \
-#     --master_port=<port> \
-#     scripts/train_pytorch.py <config_name> --exp_name=<run_name> --save_interval <interval>

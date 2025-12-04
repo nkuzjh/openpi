@@ -666,28 +666,3 @@ if __name__ == "__main__":
     main()
 
 
-# # Single GPU training:
-# uv run scripts/train_pytorch.py <config_name> --exp_name <run_name> --save_interval <interval>
-
-# # Example:
-# uv run scripts/train_pytorch.py debug --exp_name pytorch_test
-# uv run scripts/train_pytorch.py debug --exp_name pytorch_test --resume  # Resume from latest checkpoint
-# CUDA_VISIBLE_DEVICES=0 uv run scripts/train_pytorch.py debug_pi05 --exp_name pytorch_test
-# CUDA_VISIBLE_DEVICES=0 uv run scripts/train_pytorch.py pi05_libero --exp_name pytorch_test
-
-
-# # Multi-GPU training (single node):
-# uv run torchrun --standalone --nnodes=1 --nproc_per_node=<num_gpus> scripts/train_pytorch.py <config_name> --exp_name <run_name>
-
-# # Example:
-# uv run torchrun --standalone --nnodes=1 --nproc_per_node=2 scripts/train_pytorch.py pi0_aloha_sim --exp_name pytorch_ddp_test
-# uv run torchrun --standalone --nnodes=1 --nproc_per_node=2 scripts/train_pytorch.py pi0_aloha_sim --exp_name pytorch_ddp_test --resume
-
-# # Multi-Node Training:
-# uv run torchrun \
-#     --nnodes=<num_nodes> \
-#     --nproc_per_node=<gpus_per_node> \
-#     --node_rank=<rank_of_node> \
-#     --master_addr=<master_ip> \
-#     --master_port=<port> \
-#     scripts/train_pytorch.py <config_name> --exp_name=<run_name> --save_interval <interval>

@@ -16,6 +16,10 @@ import openpi.training.config as _config
 from openpi.training.droid_rlds_dataset import DroidRldsDataset
 import openpi.transforms as _transforms
 
+from csgo_datasets.localization_dataset import CsgoTrainDataset_IT
+from openpi.training.config import LeRobotCsgoDataConfig
+
+
 T_co = TypeVar("T_co", covariant=True)
 
 
@@ -138,13 +142,69 @@ def create_torch_dataset(
         return FakeDataset(model_config, num_samples=1024)
 
     dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(repo_id)
+            # dataset_meta = LeRobotDatasetMetadata({
+    #     Repository ID: 'physical-intelligence/libero',
+    #     Total episodes: '1693',
+    #     Total frames: '273465',
+    #     Features: '['image', 'wrist_image', 'state', 'actions', 'timestamp', 'frame_index', 'episode_index', 'index', 'task_index']',
+    # })',
     dataset = lerobot_dataset.LeRobotDataset(
         data_config.repo_id,
         delta_timestamps={
             key: [t / dataset_meta.fps for t in range(action_horizon)] for key in data_config.action_sequence_keys
         },
     )
+        # dataset = LeRobotDataset({
+        #     Repository ID: 'physical-intelligence/libero',
+        #     Number of selected episodes: '1693',
+        #     Number of selected samples: '273465',
+        #     Features: '['image', 'wrist_image', 'state', 'actions', 'timestamp', 'frame_index', 'episode_index', 'index', 'task_index']',
+        # })',
+        # len(dataset) = 273465
 
+
+        # sample = dataset[0]
+        # sample.keys() = dict_keys(['image', 'wrist_image', 'state', 'actions', 'timestamp', 'frame_index', 'episode_index', 'index', 'task_index', 'actions_is_pad', 'task'])
+        # sample['image'].shape = torch.Size([3, 256, 256])
+        # sample['wrist_image'].shape = torch.Size([3, 256, 256])
+        # sample['state'].shape = torch.Size([8])
+        # sample['actions'].shape = torch.Size([10, 7])
+        # sample['timestamp'] = tensor(0.)
+        # frame_index  =  tensor(0)
+        # episode_index  =  tensor(0)
+        # index  =  tensor(0)
+        # task_index  =  tensor(0)
+        # actions_is_pad  =  tensor([False, False, False, False, False, False, False, False, False, False]) #shape = torch.Size([10])
+        # task  =  "put the white mug on the left plate and put the yellow and white mug on the right plate"
+
+        #for k,v in dataset[1].items():print(k, ' = ', v)
+        #image  =  torch.Size([3, 256, 256])
+        # wrist_image  =  torch.Size([3, 256, 256])
+        # state  =  torch.Size([8])
+        # actions  =  torch.Size([10, 7])
+        # timestamp  =  tensor(0.1000)
+        # frame_index  =  tensor(1)
+        # episode_index  =  tensor(0)
+        # index  =  tensor(1)
+        # task_index  =  tensor(0)
+        # actions_is_pad  =  tensor([False, False, False, False, False, False, False, False, False, False]) # actions_is_pad  =  torch.Size([10])
+        # task  =  put the white mug on the left plate and put the yellow and white mug on the right plate
+
+        #for k,v in dataset[-1].items():print(k, ' = ', v.shape)
+        # image  =  torch.Size([3, 256, 256])
+        # wrist_image  =  torch.Size([3, 256, 256])
+        # state  =  torch.Size([8])
+        # actions  =  torch.Size([10, 7])
+        # timestamp  =  tensor(10.8000)
+        # frame_index  =  tensor(108)
+        # episode_index  =  tensor(1692)
+        # index  =  tensor(273464)
+        # task_index  =  tensor(32)
+        # actions_is_pad  =  tensor([True, True, True, True, True, True, True, True, True, True]) # actions_is_pad  =  torch.Size([10])
+        # task  =  pick up the black bowl on the ramekin and place it on the plate
+
+    # 当base_config=DataConfig(prompt_from_task=True),时, dataset[iter]返回的data dict中增加一个prompt的k:v对, prompt从dataset_meta.tasks的任务描述中获取;
+    # 在csgo定位任务中,tasks全部为一个相同的任务
     if data_config.prompt_from_task:
         dataset = TransformedDataset(dataset, [_transforms.PromptFromLeRobotTask(dataset_meta.tasks)])
 
@@ -239,7 +299,7 @@ def create_data_loader(
         skip_norm_stats: Whether to skip data normalization.
         framework: The framework to use ("jax" or "pytorch").
     """
-    data_config = config.data.create(config.assets_dirs, config.model)
+    data_config = config.data.create(config.assets_dirs, config.model, config.data.is_csgo, config.data.csgo_config)
     logging.info(f"data_config: {data_config}")
 
     if data_config.rlds_data_dir is not None:
@@ -299,8 +359,26 @@ def create_torch_data_loader(
             execute in the main process.
         seed: The seed to use for shuffling the data.
     """
-    dataset = create_torch_dataset(data_config, action_horizon, model_config)
+
+    # 根据CompositeTransform中的注释,create_torch_dataset中的transform_dataset是用来调用_transforms.PromptFromLeRobotTask获取task作为prompt的
+    # 而下面transform_dataset中的TransformedDataset(
+    #     dataset,
+    #     [
+    #         *data_config.repack_transforms.inputs,
+    #         *data_config.data_transforms.inputs,
+    #         _transforms.Normalize(norm_stats, use_quantiles=data_config.use_quantile_norm),
+    #         *data_config.model_transforms.inputs,
+    #     ],
+    # )是用来获取对应的key:value适配模型输入,并把prompt tokenize成token_ids
+    if data_config.is_csgo:
+        dataset = CsgoTrainDataset_IT(data_config.csgo_config)
+    else:
+        dataset = create_torch_dataset(data_config, action_horizon, model_config)
+    # data.keys() = dict_keys(['image', 'wrist_image', 'state', 'actions', 'timestamp', 'frame_index', 'episode_index', 'index', 'task_index', 'actions_is_pad', 'task', 'prompt'])
+    # 根据LeRobotCsgoDataConfig.create(),真正用到的keys有['image', 'wrist_image', 'actions', 'prompt']
+
     dataset = transform_dataset(dataset, data_config, skip_norm_stats=skip_norm_stats)
+    # 经过transform_dataset中LeRobotCsgoDataConfig.create()后剩余的data.keys() = dict_keys(['state', 'image', 'image_mask', 'actions', 'tokenized_prompt', 'tokenized_prompt_mask'])
 
     # Use TorchDataLoader for both frameworks
     # For PyTorch DDP, create DistributedSampler and divide batch size by world size
