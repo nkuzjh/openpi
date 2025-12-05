@@ -586,7 +586,10 @@ def train_loop(config: _config.TrainConfig):
     if config.pytorch_weight_path is not None:
         logging.info(f"Loading weights from: {config.pytorch_weight_path}")
 
-        model_path = os.path.join(config.pytorch_weight_path, "model.safetensors")
+        if os.path.exists(config.pytorch_weight_path):
+            model_path = os.path.join(config.pytorch_weight_path, "model.safetensors")
+        else:
+            model_path = os.path.join("/home/user/yc57963/.cache/openpi/openpi-assets/checkpoints/pi05_base", "model.safetensors")
         safetensors.torch.load_model(
             (model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model), model_path
         )
@@ -642,6 +645,13 @@ def train_loop(config: _config.TrainConfig):
         )
         logging.info("EMA is not supported for PyTorch training")
         logging.info(f"Training precision: {model_cfg.dtype}")
+
+        # 打印出哪些参数将被优化，以供调试
+        logging.info("    Parameters to be optimized:")
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                logging.info(f"        [TRAINABLE] {name} (shape: {param.shape})")
+        logging.info(f"model.training_params: {sum(p.numel() for p in model.parameters() if p.requires_grad)}, model.total_params: {sum(p.numel() for p in model.parameters())}")
 
     # Training loop - iterate until we reach num_train_steps
     pbar = (
