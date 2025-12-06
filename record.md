@@ -40,3 +40,10 @@
  - 启用uv的.venv环境执行nohup
  `` source .venv/bin/activate; CUDA_VISIBLE_DEVICES=1 nohup python -u train_csgo.py pi05_csgo --exp_name exp0_debug > out.out 2>&1 &``
 
+# exp
+
+## pi05_csgo_exp1
+
+ `` CUDA_VISIBLE_DEVICES=1 uv run train_csgo.py pi05_csgo_exp1 --exp_name pi05_csgo_exp1 ``
+
+

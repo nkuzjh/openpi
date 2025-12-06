@@ -591,7 +591,7 @@ def train_loop(config: _config.TrainConfig):
         else:
             model_path = os.path.join("/home/user/yc57963/.cache/openpi/openpi-assets/checkpoints/pi05_base", "model.safetensors")
         safetensors.torch.load_model(
-            (model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model), model_path
+            (model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model), model_path, strict=False
         )
         logging.info(f"Loaded PyTorch weights from {config.pytorch_weight_path}")
 
