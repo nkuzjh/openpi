@@ -470,7 +470,7 @@ def train_loop(config: _config.TrainConfig):
             format=f'%(asctime)s - %(levelname)s - %(message)s - (%(process)d:%(filename)s:%(lineno)s)',
             datefmt='%Y-%m-%d %H:%M:%S',
             handlers=[
-                logging.FileHandler(os.path.join(log_dir, 'eval.log')),
+                logging.FileHandler(os.path.join(log_dir, 'train.log')),
                 logging.StreamHandler()
             ],
             force=True
