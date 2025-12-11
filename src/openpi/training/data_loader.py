@@ -60,7 +60,8 @@ class TransformedDataset(Dataset[T_co]):
         self._transform = _transforms.compose(transforms)
 
     def __getitem__(self, index: SupportsIndex) -> T_co:
-        return self._transform(self._dataset[index])
+        data = self._transform(self._dataset[index])
+        return data
 
     def __len__(self) -> int:
         return len(self._dataset)
@@ -233,13 +234,14 @@ def transform_dataset(dataset: Dataset, data_config: _config.DataConfig, *, skip
     """Transform the dataset by applying the data transforms."""
     norm_stats = {}
     if data_config.repo_id != "fake" and not skip_norm_stats:
-        if data_config.norm_stats is None:
+        if data_config.norm_stats is None:# and data_config.ignore_norm_stats == False:
             raise ValueError(
                 "Normalization stats not found. "
                 "Make sure to run `scripts/compute_norm_stats.py --config-name=<your-config>`."
             )
         norm_stats = data_config.norm_stats
 
+    # print('norm_stats: ',norm_stats)
     return TransformedDataset(
         dataset,
         [
@@ -299,7 +301,7 @@ def create_data_loader(
         skip_norm_stats: Whether to skip data normalization.
         framework: The framework to use ("jax" or "pytorch").
     """
-    data_config = config.data.create(config.assets_dirs, config.model, config.data.is_csgo, config.data.csgo_config)
+    data_config = config.data.create(config.assets_dirs, config.model, config.data.is_csgo, config.data.csgo_config)#, config.data.ignore_norm_stats)
     logging.info(f"data_config: {data_config}")
 
     if data_config.rlds_data_dir is not None:
@@ -378,6 +380,7 @@ def create_torch_data_loader(
     # 根据LeRobotCsgoDataConfig.create(),真正用到的keys有['image', 'wrist_image', 'actions', 'prompt']
 
     dataset = transform_dataset(dataset, data_config, skip_norm_stats=skip_norm_stats)
+    # print('dataset._transform: ',dataset._transform)
     # 经过transform_dataset中LeRobotCsgoDataConfig.create()后剩余的data.keys() = dict_keys(['state', 'image', 'image_mask', 'actions', 'tokenized_prompt', 'tokenized_prompt_mask'])
 
     # Use TorchDataLoader for both frameworks

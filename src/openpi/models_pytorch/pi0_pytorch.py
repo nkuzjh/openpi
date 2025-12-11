@@ -179,7 +179,7 @@ class PI0Pytorch(nn.Module):
             list(observation.image_masks.values()),
             observation.tokenized_prompt,
             observation.tokenized_prompt_mask,
-            observation.state,
+            # observation.state,
         )
 
     def sample_noise(self, shape, device):
@@ -210,10 +210,12 @@ class PI0Pytorch(nn.Module):
         # Process images
         for img, img_mask in zip(images, img_masks, strict=True):# images[0].shape=torch.Size([2, 3, 224, 224]) images[1].shape=torch.Size([2, 3, 224, 224]) images[2].shape=torch.Size([2, 3, 224, 224]) #img_masks = [tensor([True, True], device='cuda:0'), tensor([True, True], device='cuda:0'), tensor([False, False], device='cuda:0')]
 
+            # print('img=', img.shape)
             def image_embed_func(img):
                 return self.paligemma_with_expert.embed_image(img)
 
             img_emb = self._apply_checkpoint(image_embed_func, img)#img_emb=torch.Size([2, 256, 2048])
+            # print('img_emb=', img_emb.shape)
 
             bsize, num_img_embs = img_emb.shape[:2]
 
@@ -232,6 +234,7 @@ class PI0Pytorch(nn.Module):
 
         lang_emb = self._apply_checkpoint(lang_embed_func, lang_tokens)#lang_tokens=torch.Size([2, 200]) #lang_emb.shape=torch.Size([2, 200, 2048])
         # import pdb; pdb.set_trace()
+        # print('lang_emb=', lang_emb.shape)
 
         embs.append(lang_emb)
         pad_masks.append(lang_masks)#lang_masks=torch.Size([2, 200])
@@ -248,35 +251,36 @@ class PI0Pytorch(nn.Module):
         bsize = pad_masks.shape[0]
         att_masks = att_masks[None, :].expand(bsize, len(att_masks))##att_masks = 968 -> torch.Size([2, 968])
         # import pdb; pdb.set_trace()
+        # print('embs=', embs.shape)
 
         return embs, pad_masks, att_masks
 
-    def embed_suffix(self, state, noisy_actions, timestep):
+    def embed_suffix(self, noisy_actions, timestep): #state
         """Embed state, noisy_actions, timestep to prepare for Expert Gemma processing."""
         # import pdb; pdb.set_trace()##state.shape=torch.Size([2, 32]) #noisy_actions.shape=torch.Size([2, 10, 32]) #timestep.shape=torch.Size([2])
         embs = []
         pad_masks = []
         att_masks = []
 
-        if not self.pi05:
-            if self.state_proj.weight.dtype == torch.float32:
-                state = state.to(torch.float32)
+        # if not self.pi05:
+        #     if self.state_proj.weight.dtype == torch.float32:
+        #         state = state.to(torch.float32)
 
-            # Embed state
-            def state_proj_func(state):
-                return self.state_proj(state)
+        #     # Embed state
+        #     def state_proj_func(state):
+        #         return self.state_proj(state)
 
-            state_emb = self._apply_checkpoint(state_proj_func, state)
+        #     state_emb = self._apply_checkpoint(state_proj_func, state)
 
-            embs.append(state_emb[:, None, :])
-            bsize = state_emb.shape[0]
-            device = state_emb.device
+        #     embs.append(state_emb[:, None, :])
+        #     bsize = state_emb.shape[0]
+        #     device = state_emb.device
 
-            state_mask = torch.ones(bsize, 1, dtype=torch.bool, device=device)
-            pad_masks.append(state_mask)
+        #     state_mask = torch.ones(bsize, 1, dtype=torch.bool, device=device)
+        #     pad_masks.append(state_mask)
 
-            # Set attention masks so that image and language inputs do not attend to state or actions
-            att_masks += [1]
+        #     # Set attention masks so that image and language inputs do not attend to state or actions
+        #     att_masks += [1]
 
         # import pdb; pdb.set_trace()
         # Embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
@@ -338,7 +342,7 @@ class PI0Pytorch(nn.Module):
     def forward(self, observation, actions, noise=None, time=None) -> Tensor: #actions.shape=torch.Size([2, 10, 32])
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
         # import pdb; pdb.set_trace()
-        images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=True) #images=[torch.Size([2, 224, 224, 3]), torch.Size([2, 224, 224, 3]), torch.Size([2, 224, 224, 3])] img_masks=[torch.Size([2]), torch.Size([2]), torch.Size([2])]  lang_tokens.shape=torch.Size([2, 200] lang_masks.shape=torch.Size([2, 200]) #state.shape=torch.Size([2, 32])
+        images, img_masks, lang_tokens, lang_masks = self._preprocess_observation(observation, train=True)#state #images=[torch.Size([2, 224, 224, 3]), torch.Size([2, 224, 224, 3]), torch.Size([2, 224, 224, 3])] img_masks=[torch.Size([2]), torch.Size([2]), torch.Size([2])]  lang_tokens.shape=torch.Size([2, 200] lang_masks.shape=torch.Size([2, 200]) #state.shape=torch.Size([2, 32])
 
         if noise is None:
             # import pdb; pdb.set_trace()
@@ -358,7 +362,7 @@ class PI0Pytorch(nn.Module):
         # prefix_pad_masks.shape=torch.Size([2, 968])
         # prefix_att_masks.shape=torch.Size([2, 968])
         # import pdb; pdb.set_trace()
-        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(state, x_t, time) #state.shape=torch.Size([2, 32]) #x_t.shape=torch.Size([2, 10, 32]) #time.shape=torch.Size([2])
+        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, time)#state #state.shape=torch.Size([2, 32]) #x_t.shape=torch.Size([2, 10, 32]) #time.shape=torch.Size([2])
         # (Pdb) suffix_embs.shape=torch.Size([2, 10, 1024])
         # (Pdb) suffix_pad_masks.shape=torch.Size([2, 10])
         # (Pdb) suffix_att_masks.shape=torch.Size([2, 10])
@@ -412,17 +416,20 @@ class PI0Pytorch(nn.Module):
     @torch.no_grad()
     def sample_actions(self, device, observation, noise=None, num_steps=10) -> Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
-        bsize = observation.state.shape[0]
+        # bsize = observation.state.shape[0]
+        bsize = observation.tokenized_prompt.shape[0]
         # import pdb; pdb.set_trace()
         if noise is None:
             actions_shape = (bsize, self.config.action_horizon, self.config.action_dim)
             noise = self.sample_noise(actions_shape, device)
 
         # import pdb; pdb.set_trace()
-        images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=False)
+        images, img_masks, lang_tokens, lang_masks = self._preprocess_observation(observation, train=False)#state
+
 
         # import pdb; pdb.set_trace()
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
+        # print('prefix_embs.shape=', prefix_embs.shape)
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
@@ -449,7 +456,7 @@ class PI0Pytorch(nn.Module):
         while time >= -dt / 2:
             expanded_time = time.expand(bsize)
             v_t = self.denoise_step(
-                state,
+                # state,
                 prefix_pad_masks,
                 past_key_values,
                 x_t,
@@ -464,7 +471,7 @@ class PI0Pytorch(nn.Module):
 
     def denoise_step(
         self,
-        state,
+        # state,
         prefix_pad_masks,
         past_key_values,
         x_t,
@@ -472,7 +479,7 @@ class PI0Pytorch(nn.Module):
     ):
         """Apply one denoising step of the noise `x_t` at a given timestep."""
         # import pdb; pdb.set_trace()
-        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(state, x_t, timestep)
+        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix( x_t, timestep)#state
 
         suffix_len = suffix_pad_masks.shape[1]
         batch_size = prefix_pad_masks.shape[0]

@@ -137,6 +137,7 @@ class Normalize(DataTransformFn):
         if self.norm_stats is None:
             return data
 
+        # print('self.norm_stats: ', self.norm_stats)
         return apply_tree(
             data,
             self.norm_stats,
@@ -145,10 +146,12 @@ class Normalize(DataTransformFn):
         )
 
     def _normalize(self, x, stats: NormStats):
+        # print('_normalize.stats: ', stats)
         mean, std = stats.mean[..., : x.shape[-1]], stats.std[..., : x.shape[-1]]
         return (x - mean) / (std + 1e-6)
 
     def _normalize_quantile(self, x, stats: NormStats):
+        # print('_normalize_quantile.stats: ', stats)
         assert stats.q01 is not None
         assert stats.q99 is not None
         q01, q99 = stats.q01[..., : x.shape[-1]], stats.q99[..., : x.shape[-1]]
@@ -417,6 +420,8 @@ def apply_tree(
 ) -> at.PyTree[T]:
     tree = flatten_dict(tree)
     selector = flatten_dict(selector)
+
+    # print('selector: ',selector)
 
     def transform(k: str, v: T) -> T:
         if k in selector:

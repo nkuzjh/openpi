@@ -55,13 +55,16 @@ def create_trained_policy(
         model.paligemma_with_expert.to_bfloat16_for_selected_params("bfloat16")
     else:
         model = train_config.model.load(_model.restore_params(checkpoint_dir / "params", dtype=jnp.bfloat16))
-    data_config = train_config.data.create(train_config.assets_dirs, train_config.model)
-    if norm_stats is None:
-        # We are loading the norm stats from the checkpoint instead of the config assets dir to make sure
-        # that the policy is using the same normalization stats as the original training process.
-        if data_config.asset_id is None:
-            raise ValueError("Asset id is required to load norm stats.")
-        norm_stats = _checkpoints.load_norm_stats(checkpoint_dir / "assets", data_config.asset_id)
+    data_config = train_config.data.create(train_config.assets_dirs, train_config.model, train_config.data.is_csgo, train_config.data.csgo_config)
+    if train_config.data.ignore_norm_stats == False:
+        if norm_stats is None:
+            # We are loading the norm stats from the checkpoint instead of the config assets dir to make sure
+            # that the policy is using the same normalization stats as the original training process.
+            if data_config.asset_id is None:
+                raise ValueError("Asset id is required to load norm stats.")
+            norm_stats = _checkpoints.load_norm_stats(checkpoint_dir / "assets", data_config.asset_id)
+    # else:
+    #     norm_stats = None
 
     # Determine the device to use for PyTorch models
     if is_pytorch and pytorch_device is None:
@@ -75,11 +78,11 @@ def create_trained_policy(
     return _policy.Policy(
         model,
         transforms=[
-            *repack_transforms.inputs,
+            *repack_transforms.inputs, # 推理时为空的RepackTransform.inputs; 推理时拿到test_loader的batch数据后手动构造符合repach_transform的example字典, 然后输入policy.infer(example), 在policy.infer()中调用policy._input_transform()完成data的全部transform过程;
             transforms.InjectDefaultPrompt(default_prompt),
-            *data_config.data_transforms.inputs,
+            *data_config.data_transforms.inputs, # 包含了将图像转为ndarray, uint8*255, einops.rearrange(image, "c h w -> h w c")的过程
             transforms.Normalize(norm_stats, use_quantiles=data_config.use_quantile_norm),
-            *data_config.model_transforms.inputs,
+            *data_config.model_transforms.inputs, # padding+resize过程
         ],
         output_transforms=[
             *data_config.model_transforms.outputs,

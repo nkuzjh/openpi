@@ -30,6 +30,8 @@ import os
 import platform
 import shutil
 import time
+import random
+import datetime
 
 import jax
 import numpy as np
@@ -48,8 +50,8 @@ import openpi.training.data_loader as _data
 
 
 
-from csgo_datasets.localization_dataset import id_to_map_dict, map_to_id_dict, CsgoTrainDataset_IT, CsgoEvalDataset_IT
-from loc_tokenizer import LocTokenizer
+# from csgo_datasets.localization_dataset import id_to_map_dict, map_to_id_dict, CsgoTrainDataset_IT, CsgoEvalDataset_IT
+# from loc_tokenizer import LocTokenizer
 
 
 
@@ -121,16 +123,36 @@ def cleanup_ddp():
         torch.distributed.destroy_process_group()
 
 
-def set_seed(seed: int, local_rank: int):
-    torch.manual_seed(seed + local_rank)
-    np.random.seed(seed + local_rank)
+# def set_seed(seed: int, local_rank: int):
+#     torch.manual_seed(seed + local_rank)
+#     np.random.seed(seed + local_rank)
+#     if torch.cuda.is_available():
+#         torch.cuda.manual_seed_all(seed + local_rank)
+
+def set_seed(seed=42):
+    # 1. Python 内置 random
+    random.seed(seed)
+    # 2. 操作系统环境 (这对某些哈希操作是必须的，如 set/dict 的顺序)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    # 3. NumPy
+    np.random.seed(seed)
+    # 4. PyTorch CPU
+    torch.manual_seed(seed)
+    # 5. PyTorch GPU (如果可用)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed + local_rank)
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed) # 如果有多张显卡，为所有显卡设置
+    # 6. 设置 CuDNN 后端以确保确定性 (会降低性能)
+    # 如果你非常看重结果的逐位一致性，必须开启 deterministic
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    print(f"随机种子已设置为: {seed}")
 
 
 def build_datasets(config: _config.TrainConfig):
     # Use the unified data loader with PyTorch framework
-    data_loader = _data.create_data_loader(config, framework="pytorch", shuffle=True)
+    data_loader = _data.create_data_loader(config, framework="pytorch", shuffle=True, skip_norm_stats=config.data.ignore_norm_stats)
     return data_loader, data_loader.data_config()
 
 
@@ -437,7 +459,24 @@ def visualize_csgo_batch(batch: Dict[str, Any], max_samples: int = 4):
 def train_loop(config: _config.TrainConfig):
     use_ddp, local_rank, device = setup_ddp()
     is_main = (not use_ddp) or (dist.get_rank() == 0)
-    set_seed(config.seed, local_rank)
+    # set_seed(config.seed, local_rank)
+    set_seed()
+
+    cur_time_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_dir = f"logs/{config.name}/{config.exp_name}/train_{cur_time_str}"
+    os.makedirs(log_dir, exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+            format=f'%(asctime)s - %(levelname)s - %(message)s - (%(process)d:%(filename)s:%(lineno)s)',
+            datefmt='%Y-%m-%d %H:%M:%S',
+            handlers=[
+                logging.FileHandler(os.path.join(log_dir, 'eval.log')),
+                logging.StreamHandler()
+            ],
+            force=True
+    )
+    logger = logging.getLogger(__name__)
+
 
     # Initialize checkpoint directory and wandb
     resuming = False
@@ -487,9 +526,9 @@ def train_loop(config: _config.TrainConfig):
     loader, data_config = build_datasets(config)
 
     batch_sample = next(iter(loader)) #tuple(Observation[Object], action[Tensor, bs,10,32])
-    logging.info("\nbatch_sample:")
-    logging.info(batch_sample[0])
-    logging.info(batch_sample[1])
+    logging.info(f"\nbatch_sample: {[ type(i) for i in batch_sample]}")
+    logging.info(f"batch_sample[0].to_dict().keys() = {batch_sample[0].to_dict().keys()}")
+    logging.info(f"batch_sample[1].shape = {batch_sample[1].shape}")
     logging.info("\n")
     visualize_csgo_batch(batch_sample, max_samples=4)
     # observation.__dict__.keys() = dict_keys(['images', 'image_masks', 'state', 'tokenized_prompt', 'tokenized_prompt_mask', 'token_ar_mask', 'token_loss_mask'])
@@ -501,11 +540,10 @@ def train_loop(config: _config.TrainConfig):
     # observation.token_ar_mask = None
     # observation.token_loss_mask = None
 
-
     # Log sample images to wandb on first batch
     if is_main and config.wandb_enabled and not resuming:
         # Create a separate data loader for sample batch to avoid consuming the main loader
-        sample_data_loader = _data.create_data_loader(config, framework="pytorch", shuffle=False)
+        sample_data_loader = _data.create_data_loader(config, framework="pytorch", shuffle=False, skip_norm_stats=config.data.ignore_norm_stats)
         sample_batch = next(iter(sample_data_loader))
         # Convert observation and actions to torch tensors
         observation, actions = sample_batch
@@ -811,11 +849,13 @@ def train_loop(config: _config.TrainConfig):
 
 
 def main():
-    init_logging()
+    # init_logging()
     config = _config.cli()
     train_loop(config)
 
 
 if __name__ == "__main__":
+    import torch
+    print(torch.cuda.get_arch_list())
     main()
 

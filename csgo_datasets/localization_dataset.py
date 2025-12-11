@@ -109,12 +109,18 @@ class CsgoTrainDataset_IT(torch.utils.data.Dataset):
 
         # 加载和转换图像
         map_img_path = f"{self.config['data_dir']}/{map_name}/{map_name}_radar_psd.png"
-        map_img = Image.open(map_img_path).convert('RGB')
-        map_img = self.map_transform(map_img) # -> radar_img_tensor
+        map_img = Image.open(map_img_path).convert('RGB')#map_img.size=(1024, 1024)
+        if self.config['is_dataset_aug']:
+            map_img = self.map_transform(map_img) # -> radar_img_tensor =torch.Size([3, 224, 224])
 
         fps_img_path = f"{self.config['data_dir']}/{map_name}/imgs/{data['file_frame']}.png"
         fps_img = Image.open(fps_img_path).convert('RGB')
-        fps_img = self.fps_transform(fps_img) # -> fps_img_tensor
+        if self.config['is_dataset_aug']:
+            fps_img = self.fps_transform(fps_img) # -> fps_img_tensor
+        elif self.config.get('is_fps_dropout', False) or self.config.get('is_fps_resize_dropout', False):
+            fps_img = self.fps_transform(fps_img)
+            fps_img = np.array(fps_img.permute(1,2,0))
+            fps_img = Image.fromarray((fps_img*255).astype(np.uint8))
 
         # 归一化坐标值
         x_norm = data['x'] / 1024
@@ -150,6 +156,21 @@ class CsgoTrainDataset_IT(torch.utils.data.Dataset):
                 transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
                 transforms.ToTensor(),
                 normalize,
+                CoarseDropout(max_holes=8, max_height=16, max_width=16, p=0.5),
+                GridDropout(grid_size=4, p=0.3),
+                RandomErasing(probability=config['erasing_p'], mean=[0.0, 0.0, 0.0])
+            ])
+        elif config.get('is_fps_dropout', False):
+            fps_transform = transforms.Compose([
+                transforms.ToTensor(),
+                CoarseDropout(max_holes=8, max_height=16, max_width=16, p=0.5),
+                GridDropout(grid_size=4, p=0.3),
+                RandomErasing(probability=config['erasing_p'], mean=[0.0, 0.0, 0.0])
+            ])
+        elif config.get('is_fps_resize_dropout', False):
+            fps_transform = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Resize((config['fps_size'][0], config['fps_size'][1]), interpolation=InterpolationMode.BICUBIC),
                 CoarseDropout(max_holes=8, max_height=16, max_width=16, p=0.5),
                 GridDropout(grid_size=4, p=0.3),
                 RandomErasing(probability=config['erasing_p'], mean=[0.0, 0.0, 0.0])
@@ -234,11 +255,22 @@ class CsgoEvalDataset_IT(torch.utils.data.Dataset):
         # 加载和转换图像
         map_img_path = f"{self.config['data_dir']}/{map_name}/{map_name}_radar_psd.png"
         map_img = Image.open(map_img_path).convert('RGB')
-        # map_img = self.map_transform(map_img) # -> radar_img_tensor
+        if self.config['is_dataset_aug']:
+            map_img = self.map_transform(map_img) # -> radar_img_tensor=torch.Size([3, 224, 224])
+            # map_img = np.array(map_img)#.transpose(1,2,0)#=torch.Size([224, 224, 3])
+        else:
+            map_img = np.array(map_img) #np.array(PIL.Image)=h,w,c
+        # 注意eval时其实无论何时哪种setting都不需要np.array(map_img).transpose(1,2,0),这里只是我在debug的时候出了点问题;
+        # 现在eval其实有两种setting: 一种是和train对齐,都使用dataset.get_transform; 第二种是eval时不使用任何dataset.get_transform, 但此时外面套了一层bs=1的nn.DataLoader, 为防止PIL.Image被默认collate_fn调用报错所以需要map_img = np.array(map_img)转换一下类型, 同时注释掉我自定义的visualize_batch_from_dataloader函数(这个函数也不支持直接map_img = np.array(map_img)转换的np.uint8, 该函数只支持dataset.get_transform后的torch.float32)
 
         fps_img_path = f"{self.config['data_dir']}/{map_name}/imgs/{data['file_frame']}.png"
         fps_img = Image.open(fps_img_path).convert('RGB')
-        # fps_img = self.fps_transform(fps_img) # -> fps_img_tensor
+        if self.config['is_dataset_aug']:
+            fps_img = self.fps_transform(fps_img) # -> fps_img_tensor=torch.Size([3, 224, 224])
+            # fps_img = np.array(fps_img)#.transpose(1,2,0)#=torch.Size([224, 224, 3])
+        else:
+            fps_img = np.array(fps_img)
+
 
         # 归一化坐标值 (用于填入 target 字符串)
         x_norm = data['x'] / 1024

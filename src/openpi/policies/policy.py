@@ -67,15 +67,15 @@ class Policy(BasePolicy):
     @override
     def infer(self, obs: dict, *, noise: np.ndarray | None = None) -> dict:  # type: ignore[misc]
         # Make a copy since transformations may modify the inputs in place.
-        inputs = jax.tree.map(lambda x: x, obs)
-        inputs = self._input_transform(inputs)
+        inputs = jax.tree.map(lambda x: x, obs) #inputs['observation/image'].shape=torch.Size([224, 224, 3])
+        inputs = self._input_transform(inputs) # _input_transform包含的图像处理过程见src/openpi/policies/policy_config.py::create_trained_policy #inputs['image']['base_0_rgb'].shape=np.array(224, 224, 3) #维度hwc,类型uint8*255
         if not self._is_pytorch_model:
             # Make a batch and convert to jax.Array.
             inputs = jax.tree.map(lambda x: jnp.asarray(x)[np.newaxis, ...], inputs)
             self._rng, sample_rng_or_pytorch_device = jax.random.split(self._rng)
         else:
             # Convert inputs to PyTorch tensors and move to correct device
-            inputs = jax.tree.map(lambda x: torch.from_numpy(np.array(x)).to(self._pytorch_device)[None, ...], inputs)
+            inputs = jax.tree.map(lambda x: torch.from_numpy(np.array(x)).to(self._pytorch_device)[None, ...], inputs) # 在最前面增加了一个维度,模仿batch的维度;无论是tensor,ndarray,PIL.Image都转为tensor #inputs['image']['base_0_rgb'].shape=torch.Size([1, 224, 224, 3])
             sample_rng_or_pytorch_device = self._pytorch_device
 
         # Prepare kwargs for sample_actions
@@ -87,11 +87,12 @@ class Policy(BasePolicy):
                 noise = noise[None, ...]  # Make it (1, action_horizon, action_dim)
             sample_kwargs["noise"] = noise
 
-        observation = _model.Observation.from_dict(inputs)
+        observation = _model.Observation.from_dict(inputs)# from_dict负责将图片从255的uint5转为float32(训练时tensor由dataloader转换而来,测试时tensor由上面jax.tree.map转换而来),并除以255*2-1缩放到(-1,1)的范围; 如果是tensor维度变为bs,c,h,w, 如果是array维度顺序不变 #observation.to_dict()['image']['base_0_rgb'].shape=torch.Size([1, 3, 224, 224])
         start_time = time.monotonic()
+        actions = self._sample_actions(sample_rng_or_pytorch_device, observation, **sample_kwargs)
         outputs = {
             "state": inputs["state"],
-            "actions": self._sample_actions(sample_rng_or_pytorch_device, observation, **sample_kwargs),
+            "actions": actions,
         }
         model_time = time.monotonic() - start_time
         if self._is_pytorch_model:
