@@ -171,3 +171,8 @@ cython_debug/
 .vscode/
 checkpoints
 .vscode/launch.json
+
+
+exp0_debug.out
+norm_stats.json
+processed_data
