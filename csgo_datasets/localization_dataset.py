@@ -86,7 +86,7 @@ class CsgoTrainDataset_IT(torch.utils.data.Dataset):
                 self.data_entries.append(entry)
 
         print(f"📊 Final total entries : {len(self.data_entries)}")
-        self.data_entries = [data for data in self.data_entries if data['x']!=562 and data['y']!=736]
+        self.data_entries = [data for data in self.data_entries if (data['map']=='de_dust2' and data['x']!=562 and data['y']!=736) or (data['map']!='de_dust2')]
         print(f"📊 after filter damaged entries: {len(self.data_entries)}")
         self.data_entries = self.data_entries[:-2000]
         print(f"📊 Final train entries : {len(self.data_entries)}")
@@ -230,7 +230,7 @@ class CsgoEvalDataset_IT(torch.utils.data.Dataset):
                 self.data_entries.append(entry)
 
         print(f"📊 Final total entries: {len(self.data_entries)}")
-        self.data_entries = [data for data in self.data_entries if data['x']!=562 and data['y']!=736]
+        self.data_entries = [data for data in self.data_entries if (data['map']=='de_dust2' and data['x']!=562 and data['y']!=736) or (data['map']!='de_dust2')]
         print(f"📊 after filter damaged entries: {len(self.data_entries)}")
         # print(len([data for data in self.data_entries if data['x']==562 and data['y']==736])) #87000
         self.data_entries = self.data_entries[-2000:]

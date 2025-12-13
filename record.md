@@ -87,6 +87,7 @@
 
 **eval_csgo.py**
 ``    CUDA_VISIBLE_DEVICES=1 python eval_csgo.py --config pi05_csgo_exp2 --exp_name pi05_csgo_exp2 --checkpoint checkpoints/pi05_csgo_exp2/pi05_csgo_exp2/10000    ``
+``    CUDA_VISIBLE_DEVICES=1 python eval_csgo.py --config pi05_csgo_exp2 --exp_name pi05_csgo_exp2 --checkpoint checkpoints/pi05_csgo_exp2/pi05_csgo_exp2/20000    ``
 
 
 ## pi05_csgo_exp3
@@ -98,14 +99,15 @@
 
 **eval_csgo.py**
 ``    CUDA_VISIBLE_DEVICES=0 python eval_csgo.py --config pi05_csgo_exp3 --exp_name pi05_csgo_exp3 --checkpoint checkpoints/pi05_csgo_exp3/pi05_csgo_exp3/5000    ``
+``    CUDA_VISIBLE_DEVICES=0 python eval_csgo.py --config pi05_csgo_exp3 --exp_name pi05_csgo_exp3 --checkpoint checkpoints/pi05_csgo_exp3/pi05_csgo_exp3/10000    ``
 
 
 ## pi05_csgo_exp4
 - 去除自定义数据集中的img_aug
 - 去除pi05原有的action预先计算norm_stats和训练正则化过程(wo/norm)
 - fps_resize_dropout + padding_resize + pi05_aug
- ``     CUDA_VISIBLE_DEVICES=1 nohup python train_csgo.py pi05_csgo_exp4 --exp_name pi05_csgo_exp4 > outs/pi05_csgo_exp4.out 2>&1 &     ``
- ``     CUDA_VISIBLE_DEVICES=1 python train_csgo.py pi05_csgo_exp4 --exp_name pi05_csgo_exp4    ``
+ ``     CUDA_VISIBLE_DEVICES=1 nohup uv run train_csgo.py pi05_csgo_exp4 --exp_name pi05_csgo_exp4 > outs/pi05_csgo_exp4.out 2>&1 &     ``
+ ``     CUDA_VISIBLE_DEVICES=1 uv run train_csgo.py pi05_csgo_exp4 --exp_name pi05_csgo_exp4 --resume   ``
 
 
 ## pi05_csgo_exp5
