@@ -148,4 +148,4 @@
 - num_train_steps=10_000
 - batch_size=64
 - wandb_enabled=True
- ``     CUDA_VISIBLE_DEVICES=1 python train_csgo.py pi05_csgo_exp8 --exp_name pi05_csgo_exp8    ``
+ ``     CUDA_VISIBLE_DEVICES=1 uv run train_csgo.py pi05_csgo_exp8 --exp_name pi05_csgo_exp8    ``
