@@ -48,6 +48,8 @@ import openpi.shared.normalize as _normalize
 import openpi.training.config as _config
 import openpi.training.data_loader as _data
 
+from pathlib import Path
+
 
 
 # from csgo_datasets.localization_dataset import id_to_map_dict, map_to_id_dict, CsgoTrainDataset_IT, CsgoEvalDataset_IT
@@ -83,18 +85,37 @@ def init_wandb(config: _config.TrainConfig, *, resuming: bool, enabled: bool = T
         wandb.init(mode="disabled")
         return
 
+    key_file = Path(".wandb_api_key.txt")
+    api_key = None
+    if key_file.exists():
+        # .strip() 非常重要！因为文本文件中通常末尾会有换行符 \n
+        api_key = key_file.read_text(encoding="utf-8").strip()
+        print(f"Loaded WandB API key from {key_file}")
+    else:
+        # # 如果文件不存在，尝试从环境变量读取作为备选，或者打印警告
+        # api_key = os.getenv("WANDB_API_KEY")
+        if not api_key:
+            print(f"Warning: {key_file} not found. WandB might ask for login interactively.")
+
+    if api_key:
+        wandb.login(key=api_key)
+
+    entity_name = getattr(config, 'wandb_entity', "zhh")
+
     ckpt_dir = config.checkpoint_dir
     if not ckpt_dir.exists():
         raise FileNotFoundError(f"Checkpoint directory {ckpt_dir} does not exist.")
 
     if resuming:
         run_id = (ckpt_dir / "wandb_id.txt").read_text().strip()
-        wandb.init(id=run_id, resume="must", project=config.project_name)
+        wandb.init(id=run_id, resume="must", project=config.project_name, entity=entity_name)
     else:
         wandb.init(
             name=config.exp_name,
             config=dataclasses.asdict(config),
             project=config.project_name,
+            entity=entity_name,
+            mode="online"
         )
         (ckpt_dir / "wandb_id.txt").write_text(wandb.run.id)
 

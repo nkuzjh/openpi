@@ -549,7 +549,7 @@ class TrainConfig:
     # Name of the config. Must be unique. Will be used to reference this config.
     name: tyro.conf.Suppress[str]
     # Project name.
-    project_name: str = "openpi"
+    project_name: str = "pi05_csgo"
     # Experiment name. Will be used to name the metadata and checkpoint directories.
     exp_name: str = tyro.MISSING
 
@@ -1281,6 +1281,99 @@ CSGO_CONFIGS = [
         num_train_steps=30_000,
         save_interval=5_000,
         wandb_enabled=False,
+    ),
+    TrainConfig(
+        name="pi05_csgo_exp5", # TODO
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=1,
+            action_dim=32,
+            discrete_state_input=False,
+            is_LAPE = True
+        ),
+        data=LeRobotCsgoDataConfig(
+            is_csgo = True,
+            csgo_config = {
+                "debug" : False,
+                "data_dir" : "data/processed_data",
+                "train_maps": ['de_dust2'], #['de_dust2', 'de_inferno', 'de_mirage', 'de_nuke']
+                "val_maps": ['de_dust2'],
+                "test_maps": ['de_dust2'],
+                # "debug_num_train_data": 100,
+                # "debug_num_val_data": 100,
+                "map_size": [224, 224],
+                "fps_size": [224, 224],
+                "is_dataset_aug": False,
+                "is_fps_resize_dropout": False,
+                "is_fps_aug": False,
+                "erasing_p": 0.6,
+            },
+            ignore_norm_stats = True,
+            repo_id="physical-intelligence/libero",
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+        ),
+        batch_size=2,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=10_000,
+            peak_lr=5e-5,
+            decay_steps=1_000_000,
+            decay_lr=5e-5,
+        ),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=0.999,
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        # pytorch_weight_path="/home/user/yc57963/.cache/openpi/openpi-assets/checkpoints/pi05_base",#"/path/to/your/pytorch_weight_path",
+        pytorch_weight_path="/home/jiahao/.cache/openpi/openpi-assets/checkpoints/pi05_base",#"/path/to/your/pytorch_weight_path",
+        num_train_steps=30_000,
+        save_interval=5_000,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        name="pi05_csgo_exp8",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=1,
+            action_dim=32,
+            discrete_state_input=False
+        ),
+        data=LeRobotCsgoDataConfig(
+            is_csgo = True,
+            csgo_config = {
+                "debug" : False,
+                "data_dir" : "data/preprocessed_data",
+                "train_maps": ['de_dust2'],
+                "val_maps": ['de_dust2'],
+                "test_maps": ['de_dust2'],
+                "debug_num_train_data": 100,
+                "debug_num_val_data": 100,
+                "map_size": [224, 224],
+                "fps_size": [224, 224],
+                "is_dataset_aug": False,
+                "is_fps_dropout": True,
+                "is_fps_aug": False,
+                "erasing_p": 0.6,
+            },
+            ignore_norm_stats = True,
+            repo_id="physical-intelligence/libero",
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+        ),
+        batch_size=64,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=10_000,
+            peak_lr=5e-5,
+            decay_steps=1_000_000,
+            decay_lr=5e-5,
+        ),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=0.999,
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        # pytorch_weight_path="/home/user/yc57963/.cache/openpi/openpi-assets/checkpoints/pi05_base",#"/path/to/your/pytorch_weight_path",
+        pytorch_weight_path="/home/jiahao/.cache/openpi/openpi-assets/checkpoints/pi05_base",#"/path/to/your/pytorch_weight_path",
+        num_train_steps=10_000,
+        save_interval=5_000,
+        wandb_enabled=True,
     ),
 ]
 

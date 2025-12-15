@@ -57,7 +57,14 @@ class CsgoTrainDataset_IT(torch.utils.data.Dataset):
         self.map_z_range = {}
         for map_name in config["train_maps"]:
             # --- a. 加载位置数据 ---
-            with open(f"{config['data_dir']}/{map_name}/positions.json", "r", encoding="utf-8") as f:
+            if config['data_dir'] == 'data/preprocessed_data':
+                if map_name == 'de_ancient':
+                    position_data_path = f"{config['data_dir']}/{map_name}/splits_18000_2000/train_split.json"
+                else:
+                    position_data_path = f"{config['data_dir']}/{map_name}/splits_20000_5000/train_split.json"
+            elif config['data_dir'] == 'data/processed_data':
+                position_data_path = f"{config['data_dir']}/{map_name}/positions.json"
+            with open(position_data_path, "r", encoding="utf-8") as f:
                 positions_data = json.load(f)
             # --- b. 加载该地图的 Z 轴范围 ---
             max_z, min_z = -float('inf'), float('inf')
@@ -85,10 +92,12 @@ class CsgoTrainDataset_IT(torch.utils.data.Dataset):
                 }
                 self.data_entries.append(entry)
 
-        print(f"📊 Final total entries : {len(self.data_entries)}")
-        self.data_entries = [data for data in self.data_entries if (data['map']=='de_dust2' and data['x']!=562 and data['y']!=736) or (data['map']!='de_dust2')]
-        print(f"📊 after filter damaged entries: {len(self.data_entries)}")
-        self.data_entries = self.data_entries[:-2000]
+        if config['data_dir'] == 'data/processed_data':
+            print(f"📊 Final total entries : {len(self.data_entries)}")
+            self.data_entries = [data for data in self.data_entries if (data['map']=='de_dust2' and data['x']!=562 and data['y']!=736) or (data['map']!='de_dust2')]
+            print(f"📊 after filter damaged entries: {len(self.data_entries)}")
+            self.data_entries = self.data_entries[:-2000]
+
         print(f"📊 Final train entries : {len(self.data_entries)}")
 
         self.fps_transform, self.map_transform = self.get_transform(config)
@@ -113,7 +122,10 @@ class CsgoTrainDataset_IT(torch.utils.data.Dataset):
         if self.config['is_dataset_aug']:
             map_img = self.map_transform(map_img) # -> radar_img_tensor =torch.Size([3, 224, 224])
 
-        fps_img_path = f"{self.config['data_dir']}/{map_name}/imgs/{data['file_frame']}.png"
+        if self.config['data_dir'] == 'data/preprocessed_data':
+            fps_img_path = f"{self.config['data_dir']}/{map_name}/imgs/{data['file_frame']}.jpg"
+        else:
+            fps_img_path = f"{self.config['data_dir']}/{map_name}/imgs/{data['file_frame']}.png"
         fps_img = Image.open(fps_img_path).convert('RGB')
         if self.config['is_dataset_aug']:
             fps_img = self.fps_transform(fps_img) # -> fps_img_tensor
@@ -201,7 +213,14 @@ class CsgoEvalDataset_IT(torch.utils.data.Dataset):
         self.map_z_range = {}
         for map_name in config["val_maps"]:
             # --- a. 加载位置数据 ---
-            with open(f"{config['data_dir']}/{map_name}/positions.json", "r", encoding="utf-8") as f:
+            if config['data_dir'] == 'data/preprocessed_data':
+                if map_name == 'de_ancient':
+                    position_data_path = f"{config['data_dir']}/{map_name}/splits_18000_2000/test_split.json"
+                else:
+                    position_data_path = f"{config['data_dir']}/{map_name}/splits_20000_5000/test_split.json"
+            elif config['data_dir'] == 'data/processed_data':
+                position_data_path = f"{config['data_dir']}/{map_name}/positions.json"
+            with open(position_data_path, "r", encoding="utf-8") as f:
                 positions_data = json.load(f)
             # --- b. 加载该地图的 Z 轴范围 ---
             max_z, min_z = -float('inf'), float('inf')
@@ -229,11 +248,13 @@ class CsgoEvalDataset_IT(torch.utils.data.Dataset):
                 }
                 self.data_entries.append(entry)
 
-        print(f"📊 Final total entries: {len(self.data_entries)}")
-        self.data_entries = [data for data in self.data_entries if (data['map']=='de_dust2' and data['x']!=562 and data['y']!=736) or (data['map']!='de_dust2')]
-        print(f"📊 after filter damaged entries: {len(self.data_entries)}")
-        # print(len([data for data in self.data_entries if data['x']==562 and data['y']==736])) #87000
-        self.data_entries = self.data_entries[-2000:]
+        if config['data_dir'] == 'data/processed_data':
+            print(f"📊 Final total entries: {len(self.data_entries)}")
+            self.data_entries = [data for data in self.data_entries if (data['map']=='de_dust2' and data['x']!=562 and data['y']!=736) or (data['map']!='de_dust2')]
+            print(f"📊 after filter damaged entries: {len(self.data_entries)}")
+            # print(len([data for data in self.data_entries if data['x']==562 and data['y']==736])) #87000
+            self.data_entries = self.data_entries[-2000:]
+
         print(f"📊 Final eval entries : {len(self.data_entries)}")
 
         self.fps_transform, self.map_transform = self.get_transform(config)
@@ -263,7 +284,10 @@ class CsgoEvalDataset_IT(torch.utils.data.Dataset):
         # 注意eval时其实无论何时哪种setting都不需要np.array(map_img).transpose(1,2,0),这里只是我在debug的时候出了点问题;
         # 现在eval其实有两种setting: 一种是和train对齐,都使用dataset.get_transform; 第二种是eval时不使用任何dataset.get_transform, 但此时外面套了一层bs=1的nn.DataLoader, 为防止PIL.Image被默认collate_fn调用报错所以需要map_img = np.array(map_img)转换一下类型, 同时注释掉我自定义的visualize_batch_from_dataloader函数(这个函数也不支持直接map_img = np.array(map_img)转换的np.uint8, 该函数只支持dataset.get_transform后的torch.float32)
 
-        fps_img_path = f"{self.config['data_dir']}/{map_name}/imgs/{data['file_frame']}.png"
+        if self.config['data_dir'] == 'data/preprocessed_data':
+            fps_img_path = f"{self.config['data_dir']}/{map_name}/imgs/{data['file_frame']}.jpg"
+        else:
+            fps_img_path = f"{self.config['data_dir']}/{map_name}/imgs/{data['file_frame']}.png"
         fps_img = Image.open(fps_img_path).convert('RGB')
         if self.config['is_dataset_aug']:
             fps_img = self.fps_transform(fps_img) # -> fps_img_tensor=torch.Size([3, 224, 224])

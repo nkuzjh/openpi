@@ -176,3 +176,5 @@ checkpoints
 exp0_debug.out
 norm_stats.json
 processed_data
+.wandb_api_key.txt
+.vscode/launch.json

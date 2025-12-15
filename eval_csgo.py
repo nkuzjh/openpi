@@ -385,7 +385,7 @@ if __name__ == "__main__":
         config,
         data=dataclasses.replace(
             config.data,
-            csgo_config={**config.data.csgo_config, "debug": False} #需要随机可视化5/32个postions时将debug=True,否则eval 2000个样本时debug=False
+            csgo_config={**config.data.csgo_config, "debug": True} #需要随机可视化5/32个postions时将debug=True,否则eval 2000个样本时debug=False
         )
     )
 

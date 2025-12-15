@@ -388,18 +388,18 @@ class PI0Pytorch(nn.Module):
         # Apply gradient checkpointing if enabled
         def forward_func(prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond):
             (_, suffix_out), _ = self.paligemma_with_expert.forward(
-                attention_mask=att_2d_masks_4d,
-                position_ids=position_ids,
+                attention_mask=att_2d_masks_4d, #att_2d_masks_4d=torch.Size([2, 1, 978, 978]),
+                position_ids=position_ids, # position_ids.shape=torch.Size([2, 978]),
                 past_key_values=None,
-                inputs_embeds=[prefix_embs, suffix_embs],
+                inputs_embeds=[prefix_embs, suffix_embs], #prefix_embs=torch.Size([2, 968]), suffix_embs=torch.Size([2, 10, 1024]),
                 use_cache=False,
-                adarms_cond=[None, adarms_cond],
+                adarms_cond=[None, adarms_cond], #adarms_cond.shape=torch.Size([2, 1024])
             )
             return suffix_out
         # import pdb; pdb.set_trace()
         suffix_out = self._apply_checkpoint(
             forward_func, prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond
-        ) #suffix_out=torch.Size([2, 10, 1024]) #prefix_embs=torch.Size([2, 968]), suffix_embs=torch.Size([2, 10, 1024]), att_2d_masks_4d=torch.Size([2, 1, 978, 978]), position_ids.shape=torch.Size([2, 978]), adarms_cond.shape=torch.Size([2, 1024])
+        ) #suffix_out=torch.Size([2, 10, 1024])
 
         suffix_out = suffix_out[:, -self.config.action_horizon :]
         suffix_out = suffix_out.to(dtype=torch.float32)

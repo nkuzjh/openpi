@@ -13,7 +13,7 @@
             "console": "integratedTerminal",
             "args": "${command:pickArgs}",
             "env": {
-                "CUDA_VISIBLE_DEVICES": "0"
+                "CUDA_VISIBLE_DEVICES": "1"
             },
             "justMyCode": true
         }

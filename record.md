@@ -88,6 +88,7 @@
 **eval_csgo.py**
 ``    CUDA_VISIBLE_DEVICES=1 python eval_csgo.py --config pi05_csgo_exp2 --exp_name pi05_csgo_exp2 --checkpoint checkpoints/pi05_csgo_exp2/pi05_csgo_exp2/10000    ``
 ``    CUDA_VISIBLE_DEVICES=1 python eval_csgo.py --config pi05_csgo_exp2 --exp_name pi05_csgo_exp2 --checkpoint checkpoints/pi05_csgo_exp2/pi05_csgo_exp2/20000    ``
+``    CUDA_VISIBLE_DEVICES=1 python eval_csgo.py --config pi05_csgo_exp2 --exp_name pi05_csgo_exp2 --checkpoint checkpoints/pi05_csgo_exp2/pi05_csgo_exp2/30000    ``
 
 
 ## pi05_csgo_exp3
@@ -100,6 +101,8 @@
 **eval_csgo.py**
 ``    CUDA_VISIBLE_DEVICES=0 python eval_csgo.py --config pi05_csgo_exp3 --exp_name pi05_csgo_exp3 --checkpoint checkpoints/pi05_csgo_exp3/pi05_csgo_exp3/5000    ``
 ``    CUDA_VISIBLE_DEVICES=0 python eval_csgo.py --config pi05_csgo_exp3 --exp_name pi05_csgo_exp3 --checkpoint checkpoints/pi05_csgo_exp3/pi05_csgo_exp3/10000    ``
+``    CUDA_VISIBLE_DEVICES=0 python eval_csgo.py --config pi05_csgo_exp3 --exp_name pi05_csgo_exp3 --checkpoint checkpoints/pi05_csgo_exp3/pi05_csgo_exp3/15000    ``
+``    CUDA_VISIBLE_DEVICES=0 python eval_csgo.py --config pi05_csgo_exp3 --exp_name pi05_csgo_exp3 --checkpoint checkpoints/pi05_csgo_exp3/pi05_csgo_exp3/20000    ``
 
 
 ## pi05_csgo_exp4
@@ -109,22 +112,26 @@
  ``     CUDA_VISIBLE_DEVICES=1 nohup uv run train_csgo.py pi05_csgo_exp4 --exp_name pi05_csgo_exp4 > outs/pi05_csgo_exp4.out 2>&1 &     ``
  ``     CUDA_VISIBLE_DEVICES=1 uv run train_csgo.py pi05_csgo_exp4 --exp_name pi05_csgo_exp4 --resume   ``
 
+**eval_csgo.py**
+``    CUDA_VISIBLE_DEVICES=1 python eval_csgo.py --config pi05_csgo_exp4 --exp_name pi05_csgo_exp4 --checkpoint checkpoints/pi05_csgo_exp4/pi05_csgo_exp4/10000    ``
+``    CUDA_VISIBLE_DEVICES=1 python eval_csgo.py --config pi05_csgo_exp4 --exp_name pi05_csgo_exp4 --checkpoint checkpoints/pi05_csgo_exp4/pi05_csgo_exp4/20000    ``
 
-## pi05_csgo_exp5
+
+## pi05_csgo_exp5 todo
 - 去除自定义数据集中的img_aug
 - 去除pi05原有的action预先计算norm_stats和训练正则化过程(wo/norm)
 - fps_dropout + padding_resize + pi05_aug
 - LAPE from LLaVA-ST
 
 
-## pi05_csgo_exp6
+## pi05_csgo_exp6 todo
 - Pi0_fast
 - 去除自定义数据集中的img_aug
 - 去除pi05原有的action预先计算norm_stats和训练正则化过程(wo/norm)
 - fps_dropout + padding_resize + pi05_aug
 
 
-## pi05_csgo_exp7
+## pi05_csgo_exp7 todo
 - Pi0
 - 去除自定义数据集中的img_aug
 - 去除pi05原有的action预先计算norm_stats和训练正则化过程(wo/norm)
@@ -132,3 +139,13 @@
 
 
 
+## pi05_csgo_exp8
+- 去除自定义数据集中的img_aug
+- 去除pi05原有的action预先计算norm_stats和训练正则化过程(wo/norm)
+- fps_dropout + padding_resize + pi05_aug
+
+- 新采集的dust2数据集 20000/5000
+- num_train_steps=10_000
+- batch_size=64
+- wandb_enabled=True
+ ``     CUDA_VISIBLE_DEVICES=1 python train_csgo.py pi05_csgo_exp8 --exp_name pi05_csgo_exp8    ``
