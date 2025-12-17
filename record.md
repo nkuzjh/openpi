@@ -163,7 +163,7 @@
 
 - ignore_norm_stats = False
  ``     python compute_norm_stats.py --config-name pi05_csgo_exp9    ``
- ``     CUDA_VISIBLE_DEVICES=1 python train_csgo.py pi05_csgo_exp9 --exp_name pi05_csgo_exp9    ``
+ ``     CUDA_VISIBLE_DEVICES=0 python train_csgo.py pi05_csgo_exp9 --exp_name pi05_csgo_exp9    ``
 
 
 ## pi05_csgo_exp10
