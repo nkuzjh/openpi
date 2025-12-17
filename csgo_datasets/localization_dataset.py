@@ -151,7 +151,7 @@ class CsgoTrainDataset_IT(torch.utils.data.Dataset):
         return {
             "image": fps_img,
             "wrist_image": map_img,
-            "state": gt_coords,
+            "state": torch.zeros(gt_coords.shape, dtype=gt_coords.dtype),
             "prompt": prompt_string,
             "actions": gt_coords.unsqueeze(0),
             "map_id": map_id_int
@@ -313,7 +313,7 @@ class CsgoEvalDataset_IT(torch.utils.data.Dataset):
         return {
             "image": fps_img,
             "wrist_image": map_img,
-            "state": gt_coords,
+            "state": torch.zeros(gt_coords.shape, dtype=gt_coords.dtype),
             "prompt": prompt_string,
             "actions": gt_coords.unsqueeze(0),
             "map_id": map_id_int

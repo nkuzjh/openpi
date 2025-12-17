@@ -94,6 +94,156 @@ def make_att_2d_masks(pad_masks, att_masks):
     return att_2d_masks & pad_2d_masks
 
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class AttentionPooling(nn.Module):
+    def __init__(self, in_dim):
+        super().__init__()
+        # 一个简单的 MLP 来计算每个 Patch 的重要性分数
+        self.attn = nn.Sequential(
+            nn.Linear(in_dim, in_dim // 2),
+            nn.Tanh(),
+            nn.Linear(in_dim // 2, 1)
+        )
+
+    def forward(self, x):
+        """
+        x: (B, 256, C)
+        """
+        # 1. 计算注意力分数
+        # (B, 256, C) -> (B, 256, 1)
+        scores = self.attn(x)
+
+        # 2. 归一化分数 (Softmax)
+        # 在 256 个 patch 维度上做 softmax
+        weights = F.softmax(scores, dim=1)
+
+        # 3. 加权求和
+        # (B, 256, C) * (B, 256, 1) -> (B, 256, C) -> sum -> (B, C)
+        x_weighted = torch.sum(x * weights, dim=1)
+
+        # 4. 恢复维度 (B, 1, C) 以适配后续流程
+        return x_weighted.unsqueeze(1)
+
+class QueryAggregatorPooling(nn.Module):
+    def __init__(self, embed_dim, num_heads=8):
+        super().__init__()
+        # 定义一个可学习的 Query Token
+        self.query_token = nn.Parameter(torch.randn(1, 1, embed_dim))
+
+        # 使用 Multihead Attention
+        self.mha = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
+        self.norm = nn.LayerNorm(embed_dim)
+
+    def forward(self, fps_emb):
+        """
+        fps_emb: (B, 256, C)
+        """
+        B = fps_emb.size(0)
+
+        # 1. 扩展 Query 到 Batch 维度
+        # (1, 1, C) -> (B, 1, C)
+        query = self.query_token.expand(B, -1, -1)
+
+        # 2. Cross Attention:
+        # Query = Learnable Token (B, 1, C)
+        # Key/Value = FPS Image Features  (B, 256, C)
+        # Output: (B, 1, C)
+        # 这里的 attn_output 已经是聚合后的特征了
+        attn_output, _ = self.mha(query, fps_emb, fps_emb)
+
+        # 3. Add & Norm (可选，但在 Transformer 中很常见)
+        output = self.norm(query + attn_output)
+
+        return output
+
+class FPSGuidedMapAttention(nn.Module):
+    def __init__(self, config, embed_dim=2048, num_heads=8):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.scale = embed_dim ** -0.5
+
+        if config.is_fps_map_ca and config.is_fps_pooling == 'AttentionPooling':
+            self.fps_pooling = AttentionPooling(embed_dim)
+        elif config.is_fps_map_ca and config.is_fps_pooling == 'QueryAggregatorPooling':
+            self.fps_pooling = QueryAggregatorPooling(embed_dim)
+        else:
+            self.fps_pooling = None
+
+        # 1. 定义 Q, K, V 投影
+        self.q_proj = nn.Linear(embed_dim, embed_dim)
+        self.k_proj = nn.Linear(embed_dim, embed_dim)
+        self.v_proj = nn.Linear(embed_dim, embed_dim) # [新增] 开启 V 投影
+
+        # 2. 定义输出投影 (Output Projection)
+        # 作用：将注意力加权后的特征融合并映射回原始空间，通常与 v_proj 成对出现
+        self.o_proj = nn.Linear(embed_dim, embed_dim)
+
+    def forward(self, fps_emb, map_emb):
+        """
+        Args:
+            fps_emb: (B, 256, 2048)
+            map_emb: (B, 256, 2048)
+        """
+        B, N, C = fps_emb.shape
+        H = W = int(N ** 0.5)
+
+        # --- 1. 准备 Query (FPS Global) ---
+        if self.fps_pooling:
+            fps_query = self.fps_pooling(fps_emb)
+        else:
+            fps_reshaped = fps_emb.view(B, H, W, C).permute(0, 3, 1, 2)
+            fps_global = F.adaptive_avg_pool2d(fps_reshaped, (1, 1)) # (B, C, 1, 1)
+            fps_query = fps_global.flatten(2).transpose(1, 2) # (B, 1, C)
+
+        Q = self.q_proj(fps_query) # (B, 1, C)
+
+        # --- 2. 准备 Key 和 Value (Map) ---
+        K = self.k_proj(map_emb)   # (B, 256, C)
+        V = self.v_proj(map_emb)   # (B, 256, C) <--- [修改] 使用 v_proj 处理 Map
+
+        # --- 3. 计算 Attention Map ---
+        # (B, 1, C) @ (B, C, 256) -> (B, 1, 256)
+        attn_scores = torch.matmul(Q, K.transpose(-2, -1)) * self.scale
+        attn_weights = F.softmax(attn_scores, dim=-1) # (B, 1, 256)
+
+        # --- 4. 空间加权 (Spatial Reweighting) ---
+        # 我们希望保持 (B, 256, C) 的形状，所以不能做标准的 Attention 聚合
+        # 我们将权重转置为 (B, 256, 1)，应用到 Value 上
+        attn_weights = attn_weights.transpose(1, 2) # (B, 256, 1)
+
+        # [修改] 这里乘的是 V，而不是原始的 map_emb
+        weighted_V = V * attn_weights # [64, 256, 2048] * (B, 256, 1) ==> (B, 256, C)
+
+        # --- 5. 输出投影与残差连接 ---
+        # 将加权后的 Value 投影一下
+        output = self.o_proj(weighted_V)
+
+        # [关键] 加上残差连接 (Residual Connection)
+        # 这样网络可以学习只关注重要部分，而不会丢失原始地图的背景信息
+        output = map_emb + output
+
+        return output
+
+# # --- 测试代码 ---
+# if __name__ == "__main__":
+#     bs = 2
+#     embed_dim = 2048
+
+#     # 模拟输入
+#     fps_emb = torch.randn(bs, 256, embed_dim)
+#     map_emb = torch.randn(bs, 256, embed_dim)
+
+#     model = FPSGuidedMapAttention(embed_dim=embed_dim)
+#     output = model(fps_emb, map_emb)
+
+#     print(f"FPS Shape: {fps_emb.shape}")
+#     print(f"Map Shape: {map_emb.shape}")
+#     print(f"Output Shape: {output.shape}") # 应该是 (2, 256, 2048)
+
+
 class PI0Pytorch(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -102,6 +252,11 @@ class PI0Pytorch(nn.Module):
 
         paligemma_config = _gemma.get_config(config.paligemma_variant)
         action_expert_config = _gemma.get_config(config.action_expert_variant)
+
+        if config.is_fps_map_ca:
+            self.fps_guided_map_attention = FPSGuidedMapAttention(config)
+            if config.dtype == 'bfloat16':
+                self.fps_guided_map_attention.to(dtype=torch.bfloat16)
 
         self.paligemma_with_expert = PaliGemmaWithExpertModel(
             paligemma_config,
@@ -226,6 +381,20 @@ class PI0Pytorch(nn.Module):
             att_masks += [0] * num_img_embs #[0 for _ in num_img_embs]
         # import pdb; pdb.set_trace() #att_masks = [0] * num_img_embs * len(images)
 
+        if self.config.is_fps_map_ca: #len(embs)=3 #[i.shape for i in embs] = [torch.Size([64, 256, 2048]), torch.Size([64, 256, 2048]), torch.Size([64, 256, 2048])]
+            fps_emb = embs[0]
+            map_emb = embs[1]
+
+            def fps_guided_map_attention_func(fps_emb, map_emb):
+                return self.fps_guided_map_attention(fps_emb, map_emb)
+
+            map_emb = self._apply_checkpoint(fps_guided_map_attention_func, fps_emb, map_emb)
+
+            embs[1] = map_emb
+            # 目前embs[0,1,2]分别代表image, left_wrist_image, right_wrist_image, 在csgo定位任务中image=fps，left_wrist_image=map, right_wrist_image被置为全0。
+            # 因此这里有个trick TODO 是否需要将加权的map放在right_wrist_image位置上 或者 直接替换原有map放在left_wrist_image位置上？？？
+            # 如果需要启用 embs[2]=right_wrist_image=map_emb_with_fps_attn, 则对应的img_masks[2]也要置为True
+
         # Process language tokens
         def lang_embed_func(lang_tokens):
             lang_emb = self.paligemma_with_expert.embed_language_tokens(lang_tokens)
@@ -257,7 +426,7 @@ class PI0Pytorch(nn.Module):
 
     def embed_suffix(self, noisy_actions, timestep): #state
         """Embed state, noisy_actions, timestep to prepare for Expert Gemma processing."""
-        # import pdb; pdb.set_trace()##state.shape=torch.Size([2, 32]) #noisy_actions.shape=torch.Size([2, 10, 32]) #timestep.shape=torch.Size([2])
+        # import pdb; pdb.set_trace()##state.shape=torch.Size([bs, 32]) #xt=noisy_actions.shape=torch.Size([bs, 1, 32]) #timestep.shape=torch.Size([bs])
         embs = []
         pad_masks = []
         att_masks = []
@@ -287,27 +456,28 @@ class PI0Pytorch(nn.Module):
         time_emb = create_sinusoidal_pos_embedding(
             timestep, self.action_in_proj.out_features, min_period=4e-3, max_period=4.0, device=timestep.device
         ) #self.action_in_proj.out_features=1024
-        time_emb = time_emb.type(dtype=timestep.dtype) #time_emb=torch.Size([2, 1024])
+        time_emb = time_emb.type(dtype=timestep.dtype) #time_emb=torch.Size([bs, 1024])
 
         # Fuse timestep + action information using an MLP
         def action_proj_func(noisy_actions):
             return self.action_in_proj(noisy_actions)#Linear(in_features=32, out_features=1024, bias=True)
         # import pdb; pdb.set_trace()
-        action_emb = self._apply_checkpoint(action_proj_func, noisy_actions)#action_emb = torch.Size([2, 10, 32]) -> torch.Size([2, 10, 1024])
+        action_emb = self._apply_checkpoint(action_proj_func, noisy_actions)#action_emb = torch.Size([bs, 1, 32]) -> torch.Size([bs, 1, 1024])
 
         # import pdb; pdb.set_trace()
         if not self.pi05:
-            time_emb = time_emb[:, None, :].expand_as(action_emb)
-            action_time_emb = torch.cat([action_emb, time_emb], dim=2)
+            pass
+            # time_emb = time_emb[:, None, :].expand_as(action_emb)
+            # action_time_emb = torch.cat([action_emb, time_emb], dim=2)
 
-            # Apply MLP layers
-            def mlp_func(action_time_emb):
-                x = self.action_time_mlp_in(action_time_emb)
-                x = F.silu(x)  # swish == silu
-                return self.action_time_mlp_out(x)
+            # # Apply MLP layers
+            # def mlp_func(action_time_emb):
+            #     x = self.action_time_mlp_in(action_time_emb)
+            #     x = F.silu(x)  # swish == silu
+            #     return self.action_time_mlp_out(x)
 
-            action_time_emb = self._apply_checkpoint(mlp_func, action_time_emb)
-            adarms_cond = None
+            # action_time_emb = self._apply_checkpoint(mlp_func, action_time_emb)
+            # adarms_cond = None
         else:
             # time MLP (for adaRMS)
             def time_mlp_func(time_emb):
@@ -316,9 +486,9 @@ class PI0Pytorch(nn.Module):
                 x = self.time_mlp_out(x)#Linear(in_features=1024, out_features=1024, bias=True)
                 return F.silu(x)
 
-            time_emb = self._apply_checkpoint(time_mlp_func, time_emb)#torch.Size([2, 1024])
-            action_time_emb = action_emb#torch.Size([2, 10, 1024])
-            adarms_cond = time_emb#torch.Size([2, 1024])
+            time_emb = self._apply_checkpoint(time_mlp_func, time_emb)#torch.Size([bs, 1024])
+            action_time_emb = action_emb#torch.Size([bs, 1, 1024])
+            adarms_cond = time_emb#torch.Size([bs, 1024])
 
         # import pdb; pdb.set_trace()
         # Add to input tokens
@@ -342,18 +512,18 @@ class PI0Pytorch(nn.Module):
     def forward(self, observation, actions, noise=None, time=None) -> Tensor: #actions.shape=torch.Size([2, 10, 32])
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
         # import pdb; pdb.set_trace()
-        images, img_masks, lang_tokens, lang_masks = self._preprocess_observation(observation, train=True)#state #images=[torch.Size([2, 224, 224, 3]), torch.Size([2, 224, 224, 3]), torch.Size([2, 224, 224, 3])] img_masks=[torch.Size([2]), torch.Size([2]), torch.Size([2])]  lang_tokens.shape=torch.Size([2, 200] lang_masks.shape=torch.Size([2, 200]) #state.shape=torch.Size([2, 32])
+        images, img_masks, lang_tokens, lang_masks = self._preprocess_observation(observation, train=True)#state #images=[torch.Size([bs, 3, 224, 224]), torch.Size([bs, 3, 224, 224]), torch.Size([bs, 3, 224, 224])] img_masks=[torch.Size([bs]), torch.Size([bs]), torch.Size([bs])]  lang_tokens.shape=torch.Size([bs, 200] lang_masks.shape=torch.Size([bs, 200]) #state.shape=torch.Size([bs, 32])
 
         if noise is None:
             # import pdb; pdb.set_trace()
-            noise = self.sample_noise(actions.shape, actions.device) # actions.shape 的(0,1)正态分布 noise  #noise.shape=torch.Size([2, 10, 32])
+            noise = self.sample_noise(actions.shape, actions.device) # 采样输出actions.shape=torch.Size([bs, 1, 32])形状的(0,1)正态分布noise; noise.shape=torch.Size([bs, 1, 32])
 
         if time is None:
             # import pdb; pdb.set_trace()
-            time = self.sample_time(actions.shape[0], actions.device) # 返回bs=actions.shape[0]的time向量, beta(1.5,1)采样 + 0.001 smooth, 是一个略微向1.0偏的均匀分布 #time.shape=torch.Size([2])
+            time = self.sample_time(actions.shape[0], actions.device) # 返回bs=actions.shape[0]的time向量, beta(1.5,1)采样 + 0.001 smooth, 是一个略微向1.0偏的均匀分布 #time.shape=torch.Size([bs])
 
-        time_expanded = time[:, None, None] #扩充两个维度 #time_expanded.shape=torch.Size([2, 1, 1])
-        x_t = time_expanded * noise + (1 - time_expanded) * actions # 带噪声的中间向量x_t # x_t.shape=torch.Size([2, 10, 32])
+        time_expanded = time[:, None, None] #扩充两个维度 #time_expanded.shape=torch.Size([bs, 1, 1])
+        x_t = time_expanded * noise + (1 - time_expanded) * actions # 带噪声的中间向量x_t # x_t.shape=torch.Size([bs, 1, 32])
         u_t = noise - actions # 需要模型预测的噪声(velocity field / 速度场) #u_t.shape=torch.Size([2, 10, 32])
 
         # import pdb; pdb.set_trace()
@@ -453,7 +623,7 @@ class PI0Pytorch(nn.Module):
         x_t = noise
         time = torch.tensor(1.0, dtype=torch.float32, device=device)
         # import pdb; pdb.set_trace()
-        while time >= -dt / 2:
+        while time >= -dt / 2: #这是一个非常经典的数值计算工程技巧，主要目的是为了解决**浮点数精度误差（Floating Point Precision Error）以及循环边界控制（Fencepost Problem）**的问题。简单来说：这是一种“防抖动”的安全写法，确保循环恰好执行 num_steps 次，不多也不少。
             expanded_time = time.expand(bsize)
             v_t = self.denoise_step(
                 # state,

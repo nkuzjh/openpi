@@ -33,6 +33,8 @@ class Pi0Config(_model.BaseModelConfig):
     discrete_state_input: bool = None  # type: ignore
 
     is_LAPE: bool = False
+    is_fps_map_ca: bool = False
+    is_fps_pooling: str = None
 
     def __post_init__(self):
         if self.max_token_len is None:
