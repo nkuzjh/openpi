@@ -1552,9 +1552,10 @@ CSGO_CONFIGS = [
         ),
         batch_size=128,
         lr_schedule=_optimizer.CosineDecaySchedule(
+            fps_map_ca_lr=1e-3,
             warmup_steps=1_000,
             peak_lr=5e-5,
-            decay_steps=100_000,
+            decay_steps=8_000,#100_000,
             decay_lr=5e-5,
         ),
         optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
@@ -1600,9 +1601,10 @@ CSGO_CONFIGS = [
         ),
         batch_size=128,
         lr_schedule=_optimizer.CosineDecaySchedule(
+            fps_map_ca_lr=1e-3,
             warmup_steps=1_000,
             peak_lr=5e-5,
-            decay_steps=100_000,
+            decay_steps=8_000,#100_000,
             decay_lr=5e-5,
         ),
         optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),

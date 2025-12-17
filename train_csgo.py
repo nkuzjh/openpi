@@ -924,16 +924,25 @@ def train_loop(config: _config.TrainConfig):
 
             # Collect stats
             if is_main:
-                infos.append(
-                    {
-                        "loss": loss.item(),
-                        "learning_rate": optim.param_groups[0]["lr"],
-                        "learning_rate1": optim.param_groups[1]["lr"],
-                        "learning_rate2": optim.param_groups[2]["lr"],
-                        "learning_rate3": optim.param_groups[3]["lr"],
-                        "grad_norm": float(grad_norm) if isinstance(grad_norm, torch.Tensor) else grad_norm,
-                    }
-                )
+                if config.lr_schedule.fps_map_ca_lr is not None:
+                    infos.append(
+                        {
+                            "loss": loss.item(),
+                            "learning_rate": optim.param_groups[0]["lr"],
+                            "learning_rate1": optim.param_groups[1]["lr"],
+                            "learning_rate2": optim.param_groups[2]["lr"],
+                            "learning_rate3": optim.param_groups[3]["lr"],
+                            "grad_norm": float(grad_norm) if isinstance(grad_norm, torch.Tensor) else grad_norm,
+                        }
+                    )
+                else:
+                    infos.append(
+                        {
+                            "loss": loss.item(),
+                            "learning_rate": optim.param_groups[0]["lr"],
+                            "grad_norm": float(grad_norm) if isinstance(grad_norm, torch.Tensor) else grad_norm,
+                        }
+                    )
 
             if is_main and (global_step % config.log_interval == 0):
                 elapsed = time.time() - start_time
