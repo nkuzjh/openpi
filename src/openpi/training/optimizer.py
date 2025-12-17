@@ -20,6 +20,7 @@ class CosineDecaySchedule(LRScheduleConfig):
     peak_lr: float = 2.5e-5
     decay_steps: int = 30_000
     decay_lr: float = 2.5e-6
+    fps_map_ca_lr: float = None
 
     def create(self) -> optax.Schedule:
         return optax.warmup_cosine_decay_schedule(

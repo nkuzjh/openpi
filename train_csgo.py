@@ -36,6 +36,7 @@ import datetime
 import jax
 import numpy as np
 import safetensors.torch
+import torch.nn as nn
 import torch
 import torch.distributed as dist
 import torch.nn.parallel
@@ -477,6 +478,95 @@ def visualize_csgo_batch(batch: Dict[str, Any], max_samples: int = 4):
 # visualize_csgo_batch(batch)
 
 
+def get_optimizer_params(model: nn.Module, config: dict):
+    """
+    为优化器构建参数组，区分新模块/骨干网络，以及是否应用权重衰减。
+    """
+    # 1. 获取超参数
+    new_module_lr = config.lr_schedule.fps_map_ca_lr
+    backbone_lr = config.lr_schedule.peak_lr
+    weight_decay = config.optimizer.weight_decay
+
+    # 目标新模块的关键词标识
+    new_module_keyword = "fps_guided_map_attention"
+
+    # 2. 初始化四个参数桶
+    # 组1: 新模块 & 需要衰减 (Linear weights, Conv weights)
+    params_new_decay = []
+    # 组2: 新模块 & 不需要衰减 (Bias, LayerNorm)
+    params_new_no_decay = []
+    # 组3: 骨干网络 & 需要衰减
+    params_backbone_decay = []
+    # 组4: 骨干网络 & 不需要衰减
+    params_backbone_no_decay = []
+
+    # 不需要权重衰减的关键词黑名单
+    no_decay_keywords = {'bias', 'norm', 'embedding', 'absolute_pos_embed', 'relative_position_bias_table'}
+
+    # 3. 遍历参数并分类
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+
+        # --- 判断 A: 是否应用 Weight Decay ---
+        # 规则: 维度<2 (通常是bias或1D tensor) 或者名字里包含黑名单关键词的，不进行衰减
+        if any(wd_key in name for wd_key in no_decay_keywords): # or param.ndim < 2
+            apply_decay = False
+        else:
+            apply_decay = True
+
+        # --- 判断 B: 属于新模块还是骨干网络 ---
+        is_new_module = new_module_keyword in name
+
+        # --- 分发到对应的桶 ---
+        if is_new_module:
+            if apply_decay:
+                params_new_decay.append(param)
+            else:
+                params_new_no_decay.append(param)
+        else:
+            # if apply_decay:
+            if 1:
+                params_backbone_decay.append(param)
+            # else:
+            #     params_backbone_no_decay.append(param)
+
+    # 4. 构建优化器输入列表
+    optim_groups = [
+        {
+            'params': params_backbone_decay,
+            'lr': backbone_lr,
+            'weight_decay': weight_decay,
+            'name': 'backbone_decay'
+        },
+        {
+            'params': params_backbone_no_decay,
+            'lr': backbone_lr,
+            'weight_decay': 0.0,
+            'name': 'backbone_no_decay'
+        },
+        {
+            'params': params_new_decay,
+            'lr': new_module_lr,
+            'weight_decay': weight_decay,
+            'name': 'new_module_decay'
+        },
+        {
+            'params': params_new_no_decay,
+            'lr': new_module_lr,
+            'weight_decay': 0.0,
+            'name': 'new_module_no_decay'
+        },
+    ]
+
+    # 5. (可选) 打印统计信息，防止因为名字匹配错误导致参数漏掉或分错
+    print(f"Optimizer groups summary:")
+    print(f"  - Backbone   (LR={backbone_lr}): {len(params_backbone_decay)} decay params, {len(params_backbone_no_decay)} no-decay params")
+    print(f"  - New Module (LR={new_module_lr}): {len(params_new_decay)} decay params, {len(params_new_no_decay)} no-decay params")
+
+    return optim_groups
+
+
 def train_loop(config: _config.TrainConfig):
     use_ddp, local_rank, device = setup_ddp()
     is_main = (not use_ddp) or (dist.get_rank() == 0)
@@ -661,19 +751,42 @@ def train_loop(config: _config.TrainConfig):
     end_lr = config.lr_schedule.decay_lr
 
     # Create optimizer with config parameters
-    optim = torch.optim.AdamW(
-        model.parameters(),
-        lr=peak_lr,
-        betas=(config.optimizer.b1, config.optimizer.b2),
-        eps=config.optimizer.eps,
-        weight_decay=config.optimizer.weight_decay,
-    )
+    if config.lr_schedule.fps_map_ca_lr is not None:
+        fps_map_ca_lr = config.lr_schedule.fps_map_ca_lr
+        optimizer_grouped_parameters = get_optimizer_params(model, config)
+        optim = torch.optim.AdamW(
+            optimizer_grouped_parameters,
+            lr=peak_lr,
+            betas=(config.optimizer.b1, config.optimizer.b2),
+            eps=config.optimizer.eps,
+            weight_decay=config.optimizer.weight_decay,
+        )
+    else:
+        optim = torch.optim.AdamW(
+            model.parameters(),
+            lr=peak_lr,
+            betas=(config.optimizer.b1, config.optimizer.b2),
+            eps=config.optimizer.eps,
+            weight_decay=config.optimizer.weight_decay,
+        )
+
 
     # Load checkpoint if resuming
     global_step = 0
     if resuming:
         global_step = load_checkpoint(model, optim, config.checkpoint_dir, device)
         logging.info(f"Resumed training from step {global_step}")
+
+    if config.lr_schedule.fps_map_ca_lr is not None:
+        def fps_map_ca_lr_schedule(step: int):
+            if step < warmup_steps:
+                # Match JAX behavior: start from peak_lr / (warmup_steps + 1)
+                init_lr = fps_map_ca_lr / (warmup_steps + 1)
+                return init_lr + (fps_map_ca_lr - init_lr) * step / warmup_steps
+            # cosine decay
+            progress = min(1.0, (step - warmup_steps) / max(1, config.num_train_steps - warmup_steps))
+            cos = 0.5 * (1 + np.cos(np.pi * progress))
+            return end_lr + (fps_map_ca_lr - end_lr) * cos
 
     def lr_schedule(step: int):
         if step < warmup_steps:
@@ -767,8 +880,15 @@ def train_loop(config: _config.TrainConfig):
             actions = actions.to(device)  # noqa: PLW2901
 
             # Update LR
-            for pg in optim.param_groups:
-                pg["lr"] = lr_schedule(global_step)
+            if config.lr_schedule.fps_map_ca_lr is not None:
+                for pg in optim.param_groups:
+                    if "backbone" in pg["name"]:
+                        pg["lr"] = lr_schedule(global_step)
+                    elif "new_module" in pg["name"]:
+                        pg["lr"] = fps_map_ca_lr_schedule(global_step)
+            else:
+                for pg in optim.param_groups:
+                    pg["lr"] = lr_schedule(global_step)
 
             # Forward pass
             # import pdb; pdb.set_trace()
@@ -808,6 +928,9 @@ def train_loop(config: _config.TrainConfig):
                     {
                         "loss": loss.item(),
                         "learning_rate": optim.param_groups[0]["lr"],
+                        "learning_rate1": optim.param_groups[1]["lr"],
+                        "learning_rate2": optim.param_groups[2]["lr"],
+                        "learning_rate3": optim.param_groups[3]["lr"],
                         "grad_norm": float(grad_norm) if isinstance(grad_norm, torch.Tensor) else grad_norm,
                     }
                 )
