@@ -1372,7 +1372,7 @@ CSGO_CONFIGS = [
         # pytorch_weight_path="/home/user/yc57963/.cache/openpi/openpi-assets/checkpoints/pi05_base",#"/path/to/your/pytorch_weight_path",
         pytorch_weight_path="/home/jiahao/.cache/openpi/openpi-assets/checkpoints/pi05_base",#"/path/to/your/pytorch_weight_path",
         num_train_steps=30_000,
-        save_interval=4_000,
+        save_interval=3_000,
         wandb_enabled=True,
     ),
     TrainConfig(
@@ -1613,7 +1613,7 @@ CSGO_CONFIGS = [
         # pytorch_weight_path="/home/user/yc57963/.cache/openpi/openpi-assets/checkpoints/pi05_base",#"/path/to/your/pytorch_weight_path",
         pytorch_weight_path="/home/jiahao/.cache/openpi/openpi-assets/checkpoints/pi05_base",#"/path/to/your/pytorch_weight_path",
         num_train_steps=30_000,
-        save_interval=4_000,
+        save_interval=3_000,
         wandb_enabled=True,
     ),
 ]
