@@ -303,9 +303,12 @@ def main(args, config):
         )
 
     if 1:
+        eval_start_time = time.time()
         eval_losses = defaultdict(list)
         eval_scores = []
         eval_loss, eval_score, predictions, labels, map_ids = evaluate(config, policy, test_loader, device, -999, logger)
+        eval_end_time = time.time()
+        logger.info(f"test set evaluate time: {eval_end_time - eval_start_time} seconds")
         if isinstance(eval_loss, dict):
             for key, value in eval_loss.items():
                 eval_losses[key].append(value)

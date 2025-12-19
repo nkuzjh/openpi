@@ -58,9 +58,10 @@ class CsgoTrainDataset_IT(torch.utils.data.Dataset):
         for map_name in config["train_maps"]:
             # --- a. 加载位置数据 ---
             if config['data_dir'] == 'data/preprocessed_data':
-                if map_name == 'de_ancient':
-                    position_data_path = f"{config['data_dir']}/{map_name}/splits_18000_2000/train_split.json"
-                else:
+                # if map_name == 'de_ancient':
+                #     position_data_path = f"{config['data_dir']}/{map_name}/splits_18000_2000/train_split.json"
+                # else:
+                if 1:
                     position_data_path = f"{config['data_dir']}/{map_name}/splits_20000_5000/train_split.json"
             elif config['data_dir'] == 'data/processed_data':
                 position_data_path = f"{config['data_dir']}/{map_name}/positions.json"

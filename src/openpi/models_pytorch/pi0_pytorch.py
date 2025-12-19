@@ -585,6 +585,8 @@ class PI0Pytorch(nn.Module):
 
     @torch.no_grad()
     def sample_actions(self, device, observation, noise=None, num_steps=10) -> Tensor:
+        import time
+        predict_start_time = time.time()
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         # bsize = observation.state.shape[0]
         bsize = observation.tokenized_prompt.shape[0]
@@ -617,14 +619,15 @@ class PI0Pytorch(nn.Module):
             use_cache=True,
         )
 
+        denoise_start_time = time.time()
         dt = -1.0 / num_steps
         dt = torch.tensor(dt, dtype=torch.float32, device=device)
 
         x_t = noise
-        time = torch.tensor(1.0, dtype=torch.float32, device=device)
+        t = torch.tensor(1.0, dtype=torch.float32, device=device)
         # import pdb; pdb.set_trace()
-        while time >= -dt / 2: #这是一个非常经典的数值计算工程技巧，主要目的是为了解决**浮点数精度误差（Floating Point Precision Error）以及循环边界控制（Fencepost Problem）**的问题。简单来说：这是一种“防抖动”的安全写法，确保循环恰好执行 num_steps 次，不多也不少。
-            expanded_time = time.expand(bsize)
+        while t >= -dt / 2: #这是一个非常经典的数值计算工程技巧，主要目的是为了解决**浮点数精度误差（Floating Point Precision Error）以及循环边界控制（Fencepost Problem）**的问题。简单来说：这是一种“防抖动”的安全写法，确保循环恰好执行 num_steps 次，不多也不少。
+            expanded_time = t.expand(bsize)
             v_t = self.denoise_step(
                 # state,
                 prefix_pad_masks,
@@ -635,8 +638,11 @@ class PI0Pytorch(nn.Module):
 
             # Euler step - use new tensor assignment instead of in-place operation
             x_t = x_t + dt * v_t
-            time += dt
+            t += dt
         # import pdb; pdb.set_trace()
+        denoise_end_time = time.time()
+        print(f"denoise time of one sample: {denoise_end_time - denoise_start_time} seconds")
+        print(f"predict time of one sample: {denoise_end_time - predict_start_time} seconds")
         return x_t
 
     def denoise_step(
