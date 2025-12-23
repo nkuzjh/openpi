@@ -186,7 +186,7 @@ is_fps_pooling = None
  ``     CUDA_VISIBLE_DEVICES=1 python train_csgo.py pi05_csgo_exp10 --exp_name pi05_csgo_exp10    ``
 **eval_csgo.py**
 ``    CUDA_VISIBLE_DEVICES=1 python eval_csgo.py --config pi05_csgo_exp10 --exp_name pi05_csgo_exp10 --checkpoint checkpoints/pi05_csgo_exp10/pi05_csgo_exp10/5000    ``
-
+``    CUDA_VISIBLE_DEVICES=1 python eval_csgo.py --config pi05_csgo_exp10 --exp_name pi05_csgo_exp10 --checkpoint checkpoints/pi05_csgo_exp10/pi05_csgo_exp10/25000    ``
 
 
 ### exp10_1
@@ -199,7 +199,7 @@ fps_map_ca_lr = 1e-3
 
 ### exp10_2
 is_fps_pooling = 'AttentionPooling'
- ``     CUDA_VISIBLE_DEVICES=1 uv run train_csgo.py pi05_csgo_exp10_2 --exp_name pi05_csgo_exp10_2 --resume   ``
+ ``     CUDA_VISIBLE_DEVICES=0 uv run train_csgo.py pi05_csgo_exp10_2 --exp_name pi05_csgo_exp10_2 --resume   ``
 **eval_csgo.py**
 ``    CUDA_VISIBLE_DEVICES=1 python eval_csgo.py --config pi05_csgo_exp10_2 --exp_name pi05_csgo_exp10_2 --checkpoint checkpoints/pi05_csgo_exp10_2/pi05_csgo_exp10_2/5000    ``
 

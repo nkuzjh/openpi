@@ -1204,7 +1204,7 @@ CSGO_CONFIGS = [
                 "debug" : False,
                 "data_dir" : "data/processed_data",
                 "train_maps": ['de_dust2'], #['de_dust2', 'de_inferno', 'de_mirage', 'de_nuke']
-                "val_maps": ['de_dust2'],
+                "val_maps": ['de_dust2'], #'de_mirage' OOD eval已经试验过；不能做到OOD；eval结果保存在对应exp的logs中；
                 "test_maps": ['de_dust2'],
                 # "debug_num_train_data": 100,
                 # "debug_num_val_data": 100,
@@ -1436,8 +1436,8 @@ CSGO_CONFIGS = [
             csgo_config = {
                 "debug" : False,
                 "data_dir" : "data/preprocessed_data",
-                "train_maps": ['de_dust2'],
-                "val_maps": ['de_dust2'],
+                "train_maps": ['de_dust2'],#'de_dust2'
+                "val_maps": ['de_dust2'], #'de_nuke','de_ancient','de_mirage' OOD eval已经试验过；不能做到OOD；eval结果保存在对应exp的logs中；
                 "test_maps": ['de_dust2'],
                 # "debug_num_train_data": 200,
                 # "debug_num_val_data": 200,

@@ -15,6 +15,7 @@ import jax
 import numpy as np
 import safetensors.torch
 import torch
+from torch import nn
 import torch.distributed as dist
 import torch.nn.parallel
 from torch.utils.data import DataLoader
@@ -71,6 +72,7 @@ def evaluate(config, policy, dataloader, device, epoch, logger):
     predictions = []
     labels = []
     map_ids = set()
+    map_id_list = []
     for batch_idx, batch in tqdm.tqdm(enumerate(dataloader), total=num_batches):
         fps_img = batch["image"]#.to(device)
         map_img = batch["wrist_image"]#.to(device)
@@ -139,7 +141,7 @@ def evaluate(config, policy, dataloader, device, epoch, logger):
 
         for _id in map_id:
             map_ids.add(_id.item())
-        # map_ids.add(map_id)
+            map_id_list.append(_id.item())
 
         num_samples += current_batch_size
 
@@ -160,7 +162,56 @@ def evaluate(config, policy, dataloader, device, epoch, logger):
     avg_score = total_score / num_samples
     logger.info(f"Epoch {epoch} - Eval Loss: {avg_loss:.6f}, Mean L2 Score: {avg_score:.6f}")
 
-    return {'loss_total': avg_loss}, avg_score, predictions, labels, list(map_ids)
+    return {'loss_total': avg_loss}, avg_score, predictions, labels, list(map_ids), map_id_list
+
+
+
+def get_world_coord_scores(predictions, labels, map_z_range, map_size):
+    label_xy = labels[:, :2]
+    pred_xy = predictions[:, :2]
+
+    label_z = labels[:, 2]
+    pred_z = predictions[:, 2]
+
+    label_pitch = labels[:, 3]
+    pred_pitch = predictions[:, 3]
+
+    label_yaw = labels[:, 4]
+    pred_yaw = predictions[:, 4]
+
+    # 2. 计算 XY 平面距离
+    # 假设 map.size() 返回 (Height, Width)
+    # 也就是 map_h = map.size(0), map_w = map.size(1)
+    map_h, map_w = map_size[0], map_size[1]
+    scale_vec = np.array([map_w, map_h]) # 对应 x, y 的缩放因子
+    # 还原到像素坐标 (Pixel Coordinates)
+    real_label_xy = label_xy * scale_vec
+    real_pred_xy = pred_xy * scale_vec
+    # 计算欧氏距离
+    dist_xy = np.linalg.norm(real_label_xy - real_pred_xy, axis=1).mean()
+
+    # 3. 计算高度差 (Z)
+    map_z_range = map_z_range['max_z'] - map_z_range['min_z']
+    # 修正: 去掉 axis=1，因为输入是一维数组
+    dist_z = np.abs((label_z - pred_z) * map_z_range).mean()
+
+    # 4. 计算 Pitch 角度差 (Pitch 通常不是循环的，可以直接减)
+    # 假设 pitch 是归一化的，还原回弧度
+    pitch_diff = (label_pitch - pred_pitch) * 2 * np.pi
+    # 转换为角度 (Degree)
+    dist_pitch_deg = np.rad2deg(np.abs(pitch_diff)).mean()
+
+    # 5. 计算 Yaw 角度差 (处理周期性 360 度问题)
+    # 还原回弧度
+    yaw_label_rad = label_yaw * 2 * np.pi
+    yaw_pred_rad = pred_yaw * 2 * np.pi
+    # 计算最小角度差: min(|d|, 2pi - |d|)
+    diff_yaw = np.abs(yaw_label_rad - yaw_pred_rad)
+    diff_yaw = np.minimum(diff_yaw, 2 * np.pi - diff_yaw) # 处理 359 度和 1 度的误差为 2 度
+    dist_yaw_deg = np.rad2deg(diff_yaw).mean()
+
+    return dist_xy, dist_z, dist_pitch_deg, dist_yaw_deg
+
 
 
 def inspect_dataset(dataset, name="dataset"):
@@ -244,6 +295,47 @@ def horizontal_concat_pad(img1, img2, bg_color=(255, 255, 255)):
 
     return new_img
 
+def concat_images_horizontal_resize(img1: Image.Image, img2: Image.Image) -> Image.Image:
+    """
+    横向拼接两张图片，强制第二张图片的高度与第一张一致，并保持宽高比。
+
+    Args:
+        img1: 第一张 PIL 图片对象 (作为高度基准)
+        img2: 第二张 PIL 图片对象 (将被缩放)
+
+    Returns:
+        拼接后的 PIL 图片对象
+    """
+    # 1. 获取两张图片的尺寸
+    w1, h1 = img1.size
+    w2, h2 = img2.size
+
+    # 2. 计算缩放比例，使 img2 的高度等于 img1 的高度 (h1)
+    # 比例 = 目标高度 / 原高度
+    aspect_ratio = h1 / h2
+
+    # 3. 计算 img2 缩放后的新宽度 (保持比例)
+    new_w2 = int(w2 * aspect_ratio)
+    new_h2 = h1  # 显式等于 h1
+
+    # 4. 缩放 img2
+    # 使用 LANCZOS 滤镜以获得高质量的缩放效果
+    img2_resized = img2.resize((new_w2, new_h2), Image.Resampling.LANCZOS)
+
+    # 5. 创建一个新的空白画布
+    # 总宽度 = img1 宽度 + img2 缩放后的宽度
+    # 高度 = img1 高度
+    # 模式跟随 img1 (例如 'RGB' 或 'RGBA')
+    total_width = w1 + new_w2
+    total_height = h1
+    dst = Image.new(img1.mode, (total_width, total_height))
+
+    # 6. 粘贴图片
+    dst.paste(img1, (0, 0))           # 贴在左边
+    dst.paste(img2_resized, (w1, 0))  # 贴在右边 (起始x坐标为 w1)
+
+    return dst
+
 
 
 def main(args, config):
@@ -306,7 +398,7 @@ def main(args, config):
         eval_start_time = time.time()
         eval_losses = defaultdict(list)
         eval_scores = []
-        eval_loss, eval_score, predictions, labels, map_ids = evaluate(config, policy, test_loader, device, -999, logger)
+        eval_loss, eval_score, predictions, labels, map_ids, map_id_list = evaluate(config, policy, test_loader, device, -999, logger)
         eval_end_time = time.time()
         logger.info(f"test set evaluate time: {eval_end_time - eval_start_time} seconds")
         if isinstance(eval_loss, dict):
@@ -332,6 +424,8 @@ def main(args, config):
         ]
 
         if 1:
+            vis_num_per_map = 5
+            criterion = nn.SmoothL1Loss()
             for map_id in map_ids:
                 map_name = id_to_map_dict[map_id]
                 map = Image.open(f"{config.data.csgo_config['data_dir']}/{map_name}/{map_name}_radar_psd.png").convert('RGBA')
@@ -339,34 +433,55 @@ def main(args, config):
                 overlay_label = Image.new("RGBA", map.size, (0, 0, 0, 0))
                 preds_draw = ImageDraw.Draw(overlay_preds)
                 label_draw = ImageDraw.Draw(overlay_label)
-                for i, pos in enumerate(labels[:5]):
+                for i, pos in enumerate(labels[(np.array(map_id_list) == map_id)][:vis_num_per_map]):
                     x, y = int(pos[0]*map.size[0]), int(pos[1]*map.size[0])
                     label_draw.ellipse((x-5, y-5, x+5, y+5), fill=color_list[i], outline='black', width=2)
 
-                for i, pos in enumerate(predictions[:5]):
+                for i, pos in enumerate(predictions[(np.array(map_id_list) == map_id)][:vis_num_per_map]):
                     x, y = int(pos[0]*map.size[0]), int(pos[1]*map.size[0])
                     preds_draw.ellipse((x-9, y-9, x+9, y+9), fill=color_list[i])
 
                 combined_image = Image.alpha_composite(map, overlay_label)
                 combined_image = Image.alpha_composite(combined_image, overlay_preds)
                 # combined_image.save('debug.png')
-                combined_image.save(os.path.join(log_dir, f'visual_test_{map_name}.png'))
+                # combined_image.save(os.path.join(log_dir, f'visual_test_{map_name}.png'))
 
-            fps_img_list = []
-            for i in range(5):
-                sample_dict = test_dataset[i]
-                fps_img = sample_dict['image']
-                map_id = sample_dict['map_id']
-                fps_img = tensor_to_pil_img(torch.tensor(fps_img))
-                fps_draw = ImageDraw.Draw(fps_img)
-                fps_draw.ellipse((1, 1, 10, 10), fill=color_list[i])
-                fps_img.save(os.path.join(log_dir, f'visual_test_{id_to_map_dict[map_id]}_fps_img{i}.png'))
-                fps_img_list.append(fps_img)
-            fps_imgs = vertical_concat(fps_img_list)
-            fps_imgs.save(os.path.join(log_dir, f'visual_test_{map_name}_fps_imgs.png'))
 
-            show_examples = horizontal_concat_pad(combined_image, fps_imgs)
-            show_examples.save(os.path.join(log_dir, f'visual_test_{map_name}_show_examples.png'))
+                preds_map = predictions[(np.array(map_id_list) == map_id)]
+                labels_map = labels[(np.array(map_id_list) == map_id)]
+                eval_loss_map = criterion(torch.tensor(preds_map), torch.tensor(labels_map))
+                eval_score_map = torch.norm(torch.tensor(preds_map) - torch.tensor(labels_map), dim=1).mean()
+                pred_coords_map = torch.tensor(preds_map)[:, :2]
+                label_coords_map = torch.tensor(labels_map)[:, :2]
+                avg_dist_xy_map = torch.norm(pred_coords_map - label_coords_map, p=2, dim=1).mean().item()
+                logger.info(f"    Map {map_name} - Test SmoothL1 Loss: {eval_loss_map}, Test L2 Norm: {eval_score_map}, Test Dist_xy: {avg_dist_xy_map}")
+
+
+                dist_xy, dist_z, dist_pitch_deg, dist_yaw_deg = get_world_coord_scores(predictions[(np.array(map_id_list) == map_id)], labels[(np.array(map_id_list) == map_id)], test_dataset.map_z_range[map_name], map.size)
+
+                logger.info(f"    Map {map_name} - Distance: {dist_xy:.6f} px, Height: {dist_z:.6f} world units, Pitch: {dist_pitch_deg:.6f}°, Yaw: {dist_yaw_deg:.6f}°")
+
+                fps_img_count = 0
+                fps_img_list = []
+                for i in range(len(test_dataset)):
+                    sample_dict = test_dataset[i]
+                    if sample_dict['map_id'] == map_id:
+                        fps_img = sample_dict['image']
+                        fps_img = tensor_to_pil_img(torch.tensor(fps_img))
+                        fps_draw = ImageDraw.Draw(fps_img)
+                        fps_draw.ellipse((1, 1, 50, 50), fill=color_list[i])
+                        # fps_img.save(os.path.join(log_dir, f'visual_test_{id_to_map_dict[map_id]}_fps_img{i}.png'))
+                        fps_img_list.append(fps_img)
+                        fps_img_count += 1
+                    if fps_img_count == vis_num_per_map:
+                        break
+                fps_imgs = vertical_concat(fps_img_list)
+                # fps_imgs.save(os.path.join(log_dir, f'visual_test_{map_name}_fps_imgs.png'))
+
+                show_examples = concat_images_horizontal_resize(combined_image, fps_imgs)
+                show_examples_path = os.path.join(log_dir, f'visual_test_{map_name}_show_examples.png')
+                show_examples.save(show_examples_path)
+                logger.info(f"    Map {map_name} - Saved Visualizing on: {show_examples_path}")
 
         logger.info(f"Evaluating completed. Test Loss: {eval_loss}, Test Score: {eval_score}")
 

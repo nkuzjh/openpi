@@ -1,6 +1,7 @@
 
 import os
 import json
+import random
 import numpy as np
 
 import cv2
@@ -27,17 +28,52 @@ map_to_id_dict = {
     'de_dust2': 0,
     'de_inferno': 1,
     'de_mirage': 2,
-    'de_nuke': 3
+    'de_nuke': 3,
+    'de_ancient':4,
+    'de_anubis': 5,
+    'de_golden': 6,
+    'de_overpass': 7,
+    'de_palacio': 8,
+    'de_train': 9,
+    'de_vertigo': 10,
+    'cs_agency': 11,
+    'cs_italy': 12,
+    'cs_office': 13
 }
 
 id_to_map_dict = {
     0: 'de_dust2',
     1: 'de_inferno',
     2: 'de_mirage',
-    3: 'de_nuke'
+    3: 'de_nuke',
+    4: 'de_ancient',
+    5: 'de_anubis',
+    6: 'de_golden',
+    7: 'de_overpass',
+    8: 'de_palacio',
+    9: 'de_train',
+    10: 'de_vertigo',
+    11: 'cs_agency',
+    12: 'cs_italy',
+    13: 'cs_office'
 }
 
-
+map_path_dict = {
+    'de_dust2': 'de_dust2_radar_psd.png',
+    'de_inferno': 'de_inferno_radar_psd.png',
+    'de_mirage': 'de_mirage_radar_psd.png',
+    'de_nuke': 'de_nuke_blended_radar_psd.png',
+    'de_ancient': 'de_ancient_radar_psd.png',
+    'de_anubis': 'de_anubis_radar_psd.png',
+    'de_golden': 'de_golden_radar_tga.png',
+    'de_overpass': 'de_overpass_radar_psd.png',
+    'de_palacio': 'de_palacio_radar_tga.png',
+    'de_train': 'de_train_blended_radar_psd.png',
+    'de_vertigo': 'de_vertigo_blended_radar_psd.png',
+    'cs_agency': 'cs_agency_radar_tga.png',
+    'cs_italy': 'cs_italy_radar_psd.png',
+    'cs_office': 'cs_office_radar_psd.png',
+}
 
 INSTRUCTION_TUNING_PROMPT_TEMPLATE = (
     "The following visual data has been fused and inserted into this sequence:\n"
@@ -107,7 +143,9 @@ class CsgoTrainDataset_IT(torch.utils.data.Dataset):
             indices = [335, 535, 707, 288, 21, 240, 20, 30, 809, 423, 857, 459, 557, 882, 893, 406, 24, 477, 407, 427, 453, 923, 925, 399, 752, 867, 547, 563, 424, 217, 789, 681]
             self.data_entries = [self.data_entries[i] for i in indices]
         else:
-            self.data_entries = self.data_entries[:config.get('debug_num_train_data', len(self.data_entries))]
+            # self.data_entries = self.data_entries[:config.get('debug_num_train_data', len(self.data_entries))]
+            sampled_num = config['data'].get('debug_num_train_data', len(self.data_entries))
+            self.data_entries = random.sample(self.data_entries, sampled_num)
 
     def __len__(self):
         return len(self.data_entries)
@@ -118,7 +156,8 @@ class CsgoTrainDataset_IT(torch.utils.data.Dataset):
         map_name = data['map']
 
         # 加载和转换图像
-        map_img_path = f"{self.config['data_dir']}/{map_name}/{map_name}_radar_psd.png"
+        map_path = map_path_dict[map_name]
+        map_img_path = f"{self.config['data_dir']}/{map_name}/{map_path}"
         map_img = Image.open(map_img_path).convert('RGB')#map_img.size=(1024, 1024)
         if self.config['is_dataset_aug']:
             map_img = self.map_transform(map_img) # -> radar_img_tensor =torch.Size([3, 224, 224])
@@ -215,9 +254,10 @@ class CsgoEvalDataset_IT(torch.utils.data.Dataset):
         for map_name in config["val_maps"]:
             # --- a. 加载位置数据 ---
             if config['data_dir'] == 'data/preprocessed_data':
-                if map_name == 'de_ancient':
-                    position_data_path = f"{config['data_dir']}/{map_name}/splits_18000_2000/test_split.json"
-                else:
+                # if map_name == 'de_ancient':
+                #     position_data_path = f"{config['data_dir']}/{map_name}/splits_18000_2000/test_split.json"
+                # else:
+                if 1:
                     position_data_path = f"{config['data_dir']}/{map_name}/splits_20000_5000/test_split.json"
             elif config['data_dir'] == 'data/processed_data':
                 position_data_path = f"{config['data_dir']}/{map_name}/positions.json"
@@ -264,7 +304,10 @@ class CsgoEvalDataset_IT(torch.utils.data.Dataset):
             indices = [335, 535, 707, 288, 21, 240, 20, 30, 809, 423, 857, 459, 557, 882, 893, 406, 24, 477, 407, 427, 453, 923, 925, 399, 752, 867, 547, 563, 424, 217, 789, 681]
             self.data_entries = [self.data_entries[i] for i in indices]
         else:
-            self.data_entries = self.data_entries[:config.get('debug_num_val_data', len(self.data_entries))]
+            # self.data_entries = self.data_entries[:config.get('debug_num_val_data', len(self.data_entries))]
+            sampled_num = config['data'].get('debug_num_val_data', len(self.data_entries))
+            self.data_entries = random.sample(self.data_entries, sampled_num)
+
 
     def __len__(self):
         return len(self.data_entries)
@@ -275,7 +318,8 @@ class CsgoEvalDataset_IT(torch.utils.data.Dataset):
         map_name = data['map']
 
         # 加载和转换图像
-        map_img_path = f"{self.config['data_dir']}/{map_name}/{map_name}_radar_psd.png"
+        map_path = map_path_dict[map_name]
+        map_img_path = f"{self.config['data_dir']}/{map_name}/{map_path}"
         map_img = Image.open(map_img_path).convert('RGB')
         if self.config['is_dataset_aug']:
             map_img = self.map_transform(map_img) # -> radar_img_tensor=torch.Size([3, 224, 224])
