@@ -33,7 +33,7 @@ from openpi.policies import droid_policy
 from openpi.policies import policy_config
 from openpi.shared import download
 
-from csgo_datasets.localization_dataset import id_to_map_dict, map_to_id_dict, CsgoTrainDataset_IT, CsgoEvalDataset_IT
+from csgo_datasets.localization_dataset import id_to_map_dict, map_to_id_dict, CsgoTrainDataset_IT, CsgoEvalDataset_IT, map_path_dict
 
 import PIL
 from PIL import Image, ImageDraw
@@ -428,7 +428,7 @@ def main(args, config):
             criterion = nn.SmoothL1Loss()
             for map_id in map_ids:
                 map_name = id_to_map_dict[map_id]
-                map = Image.open(f"{config.data.csgo_config['data_dir']}/{map_name}/{map_name}_radar_psd.png").convert('RGBA')
+                map = Image.open(f"{config.data.csgo_config['data_dir']}/{map_name}/{map_path_dict[map_name]}").convert('RGBA')
                 overlay_preds = Image.new("RGBA", map.size, (0, 0, 0, 0))
                 overlay_label = Image.new("RGBA", map.size, (0, 0, 0, 0))
                 preds_draw = ImageDraw.Draw(overlay_preds)

@@ -144,7 +144,7 @@ class CsgoTrainDataset_IT(torch.utils.data.Dataset):
             self.data_entries = [self.data_entries[i] for i in indices]
         else:
             # self.data_entries = self.data_entries[:config.get('debug_num_train_data', len(self.data_entries))]
-            sampled_num = config['data'].get('debug_num_train_data', len(self.data_entries))
+            sampled_num = config.get('debug_num_train_data', len(self.data_entries))
             self.data_entries = random.sample(self.data_entries, sampled_num)
 
     def __len__(self):
@@ -305,7 +305,7 @@ class CsgoEvalDataset_IT(torch.utils.data.Dataset):
             self.data_entries = [self.data_entries[i] for i in indices]
         else:
             # self.data_entries = self.data_entries[:config.get('debug_num_val_data', len(self.data_entries))]
-            sampled_num = config['data'].get('debug_num_val_data', len(self.data_entries))
+            sampled_num = config.get('debug_num_val_data', len(self.data_entries))
             self.data_entries = random.sample(self.data_entries, sampled_num)
 
 
