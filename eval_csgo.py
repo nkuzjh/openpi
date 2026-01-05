@@ -469,7 +469,7 @@ def main(args, config):
                         fps_img = sample_dict['image']
                         fps_img = tensor_to_pil_img(torch.tensor(fps_img))
                         fps_draw = ImageDraw.Draw(fps_img)
-                        fps_draw.ellipse((1, 1, 50, 50), fill=color_list[i])
+                        fps_draw.ellipse((1, 1, 50, 50), fill=color_list[fps_img_count])
                         # fps_img.save(os.path.join(log_dir, f'visual_test_{id_to_map_dict[map_id]}_fps_img{i}.png'))
                         fps_img_list.append(fps_img)
                         fps_img_count += 1
