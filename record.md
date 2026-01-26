@@ -258,6 +258,7 @@ is_fps_pooling = 'QueryAggregatorPooling'
  ``     CUDA_VISIBLE_DEVICES=0 uv run train_csgo.py pi05_csgo_3maps_exp9 --exp_name pi05_csgo_3maps_exp9 --resume   ``
 **eval_csgo.py**
 ``    CUDA_VISIBLE_DEVICES=1 python eval_csgo.py --config pi05_csgo_3maps_exp9 --exp_name pi05_csgo_3maps_exp9 --checkpoint checkpoints/pi05_csgo_3maps_exp9/pi05_csgo_3maps_exp9/25000    ``
+``    CUDA_VISIBLE_DEVICES=1 python eval_csgo.py --config pi05_csgo_3maps_exp9 --exp_name pi05_csgo_3maps_exp9 --checkpoint checkpoints/pi05_csgo_3maps_exp9/pi05_csgo_3maps_exp9/30000    ``
 
 
  ## pi05_csgo_3maps_exp10
@@ -275,18 +276,25 @@ is_fps_pooling = None
  ``     CUDA_VISIBLE_DEVICES=2 uv run train_csgo.py pi05_csgo_3maps_exp10 --exp_name pi05_csgo_3maps_exp10 --resume   ``
 **eval_csgo.py**
 ``    CUDA_VISIBLE_DEVICES=1 python eval_csgo.py --config pi05_csgo_3maps_exp10 --exp_name pi05_csgo_3maps_exp10 --checkpoint checkpoints/pi05_csgo_3maps_exp10/pi05_csgo_3maps_exp10/5000    ``
+``    CUDA_VISIBLE_DEVICES=1 python eval_csgo.py --config pi05_csgo_3maps_exp10 --exp_name pi05_csgo_3maps_exp10 --checkpoint checkpoints/pi05_csgo_3maps_exp10/pi05_csgo_3maps_exp10/30000    ``
 
 
 ### exp10_1
 fps_map_ca_lr = 1e-3
- ``     CUDA_VISIBLE_DEVICES=3 uv run train_csgo.py pi05_csgo_3maps_exp10_1 --exp_name pi05_csgo_3maps_exp10_1 --resume   ``
- **eval_csgo.py**
+ ``     CUDA_VISIBLE_DEVICES=0 uv run train_csgo.py pi05_csgo_3maps_exp10_1 --exp_name pi05_csgo_3maps_exp10_1 --resume   ``
+**eval_csgo.py**
 ``    CUDA_VISIBLE_DEVICES=1 python eval_csgo.py --config pi05_csgo_3maps_exp10_1 --exp_name pi05_csgo_3maps_exp10_1 --checkpoint checkpoints/pi05_csgo_3maps_exp10_1/pi05_csgo_3maps_exp10_1/8000    ``
+``    CUDA_VISIBLE_DEVICES=1 python eval_csgo.py --config pi05_csgo_3maps_exp10_1 --exp_name pi05_csgo_3maps_exp10_1 --checkpoint checkpoints/pi05_csgo_3maps_exp10_1/pi05_csgo_3maps_exp10_1/29999    ``
 
 ### exp10_2
 is_fps_pooling = 'AttentionPooling'
  ``     CUDA_VISIBLE_DEVICES=0 python train_csgo.py pi05_csgo_3maps_exp10_2 --exp_name pi05_csgo_3maps_exp10_2 --resume   ``
+**eval_csgo.py**
+``    CUDA_VISIBLE_DEVICES=1 python eval_csgo.py --config pi05_csgo_3maps_exp10_2 --exp_name pi05_csgo_3maps_exp10_2 --checkpoint checkpoints/pi05_csgo_3maps_exp10_2/pi05_csgo_3maps_exp10_2/29999    ``
 
 ### exp10_3
 is_fps_pooling = 'QueryAggregatorPooling'
- ``     CUDA_VISIBLE_DEVICES=0 python train_csgo.py pi05_csgo_3maps_exp10_3 --exp_name pi05_csgo_3maps_exp10_3 --resume   ``
+ ``     CUDA_VISIBLE_DEVICES=3 uv run train_csgo.py pi05_csgo_3maps_exp10_3 --exp_name pi05_csgo_3maps_exp10_3 --resume   ``
+ **eval_csgo.py**
+``    CUDA_VISIBLE_DEVICES=1 python eval_csgo.py --config pi05_csgo_3maps_exp10_3 --exp_name pi05_csgo_3maps_exp10_3 --checkpoint checkpoints/pi05_csgo_3maps_exp10_3/pi05_csgo_3maps_exp10_3/18000    ``
+``    CUDA_VISIBLE_DEVICES=1 python eval_csgo.py --config pi05_csgo_3maps_exp10_3 --exp_name pi05_csgo_3maps_exp10_3 --checkpoint checkpoints/pi05_csgo_3maps_exp10_3/pi05_csgo_3maps_exp10_3/30000    ``
