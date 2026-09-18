@@ -3,6 +3,7 @@ assets/
 checkpoints/
 data/
 wandb/
+outputs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -130,6 +131,7 @@ celerybeat.pid
 # Environments
 .env
 .venv
+.tools/
 env/
 venv/
 ENV/
