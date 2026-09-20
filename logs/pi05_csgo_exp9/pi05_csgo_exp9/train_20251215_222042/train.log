@@ -1,0 +1,2 @@
+2025-12-15 22:20:42 - INFO - Created experiment checkpoint directory: /data/jiahao/openpi/checkpoints/pi05_csgo_exp9/pi05_csgo_exp9 - (4056353:train_csgo.py:528)
+2025-12-15 22:20:44 - INFO - Using batch size per GPU: 64 (total batch size across 1 GPUs: 64) - (4056353:train_csgo.py:542)
