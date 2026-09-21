@@ -7,9 +7,10 @@ adapter in `src/openpi/csgo/data.py` reads `seen_train`, `seen_validation`, and
 ground-truth pose out of model inputs. The model predicts a horizon-one
 absolute normalized action `[x, y, z, pitch, yaw]`.
 
-The adaptation uses native JAX LoRA together with trainable action input/output
-projections and the Pi0.5 time MLP. SigLIP is frozen. Input preprocessing is
-resize/tokenization/padding only; no coordinate crop augmentation is applied.
+The legacy `v2_5k` adaptation uses native JAX LoRA together with trainable
+action input/output projections and the Pi0.5 time MLP. SigLIP is frozen. Its
+input preprocessing is resize/tokenization/padding only; the profile has no
+coordinate crop augmentation.
 
 ## Environment
 
@@ -101,11 +102,40 @@ Inference is resumable by rerunning the same command: existing validated rows
 are retained and missing rows are appended. A validation pass can be selected
 explicitly with `--split seen_validation`.
 
+## Profiles
+
+Omitting `--profile` selects the original `v2_5k` run and keeps its existing
+`outputs/csgo_benchmark_v2_seen10/pi0.5/seed_<seed>/` path. The approved
+`exp32_loc_main` profile uses 32D internal actions, train-only q01/q99 pose
+normalization, train-only FPV dropout, and a 128-sample effective batch. It
+defaults to a one-sample microbatch accumulated 128 times, 19,500 optimizer
+updates, and a `5e-5` peak and ending learning rate:
+
+```bash
+RUN_FULL=1 scripts/run_csgo_seen10.sh train --profile exp32_loc_main --seed 0
+RUN_FULL=1 scripts/run_csgo_seen10.sh infer --profile exp32_loc_main --seed 0 --checkpoint-tag best
+RUN_FULL=1 scripts/run_csgo_seen10.sh eval --profile exp32_loc_main --seed 0 --checkpoint-tag best
+RUN_FULL=1 scripts/run_csgo_seen10.sh all --profile exp32_loc_main --seed 0
+RUN_FULL=0 scripts/run_csgo_seen10.sh smoke --profile exp32_loc_main --seed 0
+```
+
+The new formal run is isolated under
+`outputs/csgo_benchmark_v2_seen10/pi0.5_exp32_loc_main/seed_<seed>/`. Smoke
+defaults to a one-sample microbatch on one device (one sample per device on a
+multi-device host) and one update per effective batch; pass `--batch-size` and
+`--gradient-accumulation-steps` for another bounded setup.
+Training saves at completed steps 3,900, 7,800, 11,700, 15,600, and 19,500.
+Inference from `best` writes `localization/predictions.jsonl`; inference from
+`late` writes `localization_late/predictions.jsonl`, with separate manifests
+and evaluator reports. `all` runs inference and evaluation for both aliases.
+The default `best` output remains `localization` for existing commands.
+
 ## Outputs
 
-Formal runs use
-`outputs/csgo_benchmark_v2_seen10/pi0.5/seed_<seed>/`. Checkpoints are saved at
-five equal completed-step intervals under `checkpoints/<step>/`, with
+Formal `v2_5k` runs use
+`outputs/csgo_benchmark_v2_seen10/pi0.5/seed_<seed>`; `exp32_loc_main` uses
+the separate profile path above. Checkpoints are saved at five equal
+completed-step intervals under `checkpoints/<step>/`, with
 `checkpoints/late` and `checkpoints/best` symlinks. Training writes
 `run_config.json`, `loss.jsonl`, `train_metrics.jsonl`, `loss.png`, and fixed
 validation visualizations.

@@ -50,6 +50,57 @@ def test_lora_einsum_same_output():
     assert jnp.allclose(output, output_lora)
 
 
+def test_lora_einsum_peft_initialization_scaling_and_dropout():
+    config = lora.LoRAConfig(
+        rank=2,
+        alpha=4.0,
+        a_init_fn=lora.peft_lora_a_init,
+        b_init_fn=nn.initializers.zeros,
+        dropout=0.5,
+    )
+    module = lora.Einsum(shape=(8, 8), init_fn=nn.initializers.zeros, lora_config=config)
+    x = jnp.ones((2, 8), dtype=jnp.float32)
+    params = module.init(
+        {"params": jax.random.key(0), "dropout": jax.random.key(0)},
+        "BD,DE->BE",
+        x,
+    )
+
+    a = params["params"]["lora_a"]
+    b = params["params"]["lora_b"]
+    assert jnp.any(a != 0)
+    assert jnp.all(b == 0)
+    # PEFT uses alpha / rank (not alpha / sqrt(rank)) when rslora is disabled.
+    assert config.scaling_value == 2.0
+
+    params["params"]["lora_a"] = jnp.ones((8, 2), dtype=jnp.float32)
+    params["params"]["lora_b"] = jnp.ones((2, 8), dtype=jnp.float32)
+    deterministic = module.apply(
+        params,
+        "BD,DE->BE",
+        x,
+        deterministic=True,
+        rngs={"dropout": jax.random.key(0)},
+    )
+    train_a = module.apply(
+        params,
+        "BD,DE->BE",
+        x,
+        deterministic=False,
+        rngs={"dropout": jax.random.key(1)},
+    )
+    train_b = module.apply(
+        params,
+        "BD,DE->BE",
+        x,
+        deterministic=False,
+        rngs={"dropout": jax.random.key(2)},
+    )
+    assert jnp.all(deterministic == 32.0)
+    assert not jnp.allclose(train_a, deterministic)
+    assert not jnp.allclose(train_a, train_b)
+
+
 def test_lora_ffn_params_shape():
     ffn = lora.FeedForward(features=8, hidden_dim=32)
     ffn_lora = lora.FeedForward(
@@ -92,3 +143,24 @@ def test_lora_ffn_same_output():
     output_lora = ffn_lora.apply(params_lora, x)
 
     assert jnp.allclose(output, output_lora)
+
+
+def test_lora_ffn_scales_all_adapter_projections():
+    ffn = lora.FeedForward(
+        features=1,
+        hidden_dim=1,
+        lora_config=lora.LoRAConfig(
+            rank=1,
+            alpha=3.0,
+            init_fn=nn.initializers.ones,
+            rslora=False,
+        ),
+    )
+    x = jnp.ones((1, 1), dtype=jnp.float32)
+    params = ffn.init(jax.random.key(0), x)
+    for name in ("gating_einsum", "linear"):
+        params["params"][name] = jnp.zeros_like(params["params"][name])
+    output = ffn.apply(params, x)
+
+    expected = 9.0 * nn.gelu(jnp.asarray(3.0, dtype=jnp.float32))
+    assert jnp.allclose(output, expected.reshape((1, 1)))

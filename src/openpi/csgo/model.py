@@ -1,9 +1,8 @@
-"""Pi0.5 model adapter for CSGO Seen-10 localization.
+"""Pi0.5 model adapter for CSGO Seen-10 localization profiles.
 
-The benchmark uses the native Pi0.5 flow matching model with a one-step,
-five-dimensional action.  Keeping the adapter as a thin subclass is useful:
-the native NNX graph, image encoder, tokenizer, action expert and sampler stay
-bit-for-bit compatible with the released checkpoint format.
+The legacy profile uses a one-step, five-dimensional action. The experiment
+profile keeps all 32 native Pi0.5 action dimensions while adapting the training
+and freeze configuration around the native model graph.
 """
 
 from __future__ import annotations
@@ -11,6 +10,7 @@ from __future__ import annotations
 import dataclasses
 import os
 import re
+from typing import Literal
 
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
@@ -27,23 +27,57 @@ from openpi.shared import array_typing as at
 from openpi.shared import download
 from openpi.shared import nnx_utils
 
+CSGOProfile = Literal["v2_5k", "exp32_loc_main"]
+
 
 @dataclasses.dataclass(frozen=True)
 class CSGOPi0Config(_pi0_config.Pi0Config):
-    """Configuration for the Seen-10 five-DoF Pi0.5 localization adapter."""
+    """Configuration for a CSGO localization Pi0.5 profile.
 
-    action_dim: int = 5
+    ``v2_5k`` is the legacy five-dimensional profile. ``exp32_loc_main`` uses
+    the full 32-dimensional Pi0.5 action projection and PEFT-style rank-32
+    adapters. ``profile`` is an InitVar so it does not change the serialized
+    legacy model-config keys used by existing run metadata.
+    """
+
+    profile: dataclasses.InitVar[CSGOProfile] = "v2_5k"
+    action_dim: int | None = None
     action_horizon: int = 1
     pi05: bool = True
-    paligemma_variant: _gemma.Variant = "gemma_2b_lora"
-    action_expert_variant: _gemma.Variant = "gemma_300m_lora"
+    paligemma_variant: _gemma.Variant | None = None
+    action_expert_variant: _gemma.Variant | None = None
 
-    def __post_init__(self) -> None:
-        super().__post_init__()
+    def __post_init__(self, profile: CSGOProfile) -> None:
+        if profile not in ("v2_5k", "exp32_loc_main"):
+            raise ValueError(f"Unknown CSGO profile {profile!r}; choose 'v2_5k' or 'exp32_loc_main'.")
+        action_dim = 5 if profile == "v2_5k" else 32
+        if self.action_dim is not None and self.action_dim != action_dim:
+            raise ValueError(f"CSGO profile {profile!r} requires action_dim={action_dim}.")
+        object.__setattr__(self, "action_dim", action_dim)
+
         if not self.pi05:
             raise ValueError("CSGO Seen-10 requires the Pi0.5 model (pi05=True).")
-        if self.action_dim != 5 or self.action_horizon != 1:
-            raise ValueError("CSGO Seen-10 requires action_dim=5 and action_horizon=1.")
+        if self.action_horizon != 1:
+            raise ValueError("CSGO localization requires action_horizon=1.")
+
+        if profile == "exp32_loc_main":
+            if self.discrete_state_input is True:
+                raise ValueError("The exp32_loc_main profile requires discrete_state_input=False.")
+            required_variants = ("gemma_2b_lora_r32", "gemma_300m_lora_r32")
+            if self.paligemma_variant not in (None, required_variants[0]):
+                raise ValueError(f"exp32_loc_main requires paligemma_variant={required_variants[0]!r}.")
+            if self.action_expert_variant not in (None, required_variants[1]):
+                raise ValueError(f"exp32_loc_main requires action_expert_variant={required_variants[1]!r}.")
+            object.__setattr__(self, "paligemma_variant", required_variants[0])
+            object.__setattr__(self, "action_expert_variant", required_variants[1])
+        else:
+            object.__setattr__(self, "paligemma_variant", self.paligemma_variant or "gemma_2b_lora")
+            object.__setattr__(self, "action_expert_variant", self.action_expert_variant or "gemma_300m_lora")
+
+        super().__post_init__()
+        if profile == "exp32_loc_main":
+            object.__setattr__(self, "discrete_state_input", False)
+        object.__setattr__(self, "profile", profile)
 
     @override
     def create(self, rng: at.KeyArrayLike) -> CSGOPi0:
@@ -51,17 +85,21 @@ class CSGOPi0Config(_pi0_config.Pi0Config):
 
     @override
     def get_freeze_filter(self) -> nnx.filterlib.Filter:
-        """Freeze native language weights and SigLIP, preserving adapter heads.
+        """Freeze base language weights and the SigLIP encoder.
 
         ``Pi0Config.get_freeze_filter`` already freezes the non-LoRA Gemma
-        weights.  SigLIP is selected explicitly here because the native filter
-        intentionally leaves the vision module trainable for some fine-tunes.
-        Action projections and Pi0.5 time MLP are intentionally not selected by
-        this filter and therefore remain trainable with the LoRA parameters.
+        weights. The legacy profile also freezes the full image module, as it
+        did before profiles were introduced. In ``exp32_loc_main``, the SigLIP
+        encoder is frozen while ``PaliGemma/img/head`` remains trainable as the
+        image-to-language-width connector. Action projections and the Pi0.5
+        time MLP remain trainable.
         """
 
         native_filter = super().get_freeze_filter()
-        image_filter = nnx_utils.PathRegex(".*img.*")
+        if self.profile == "v2_5k":
+            image_filter = nnx_utils.PathRegex(".*img.*")
+        else:
+            image_filter = nnx_utils.PathRegex(r".*PaliGemma/img/(?!head(?:/|$)).*")
         return nnx.Any(native_filter, image_filter)
 
 
@@ -70,6 +108,7 @@ class CSGOPi0(_pi0.Pi0):
 
     def __init__(self, config: CSGOPi0Config, rngs: nnx.Rngs):
         super().__init__(config, rngs)
+        self.profile = config.profile
 
     @override
     def compute_loss(
@@ -80,24 +119,37 @@ class CSGOPi0(_pi0.Pi0):
         *,
         train: bool = False,
     ) -> at.Float[at.Array, "*b ah"]:
-        # Camera rotation/crop augmentation changes the camera pose label.  The
-        # native Pi0 implementation applies those transforms when train=True,
-        # so always use the native flow loss in eval preprocessing mode here.
-        del train
-        return super().compute_loss(rng, observation, actions, train=False)
+        # Preserve the historical label-safe inference preprocessing in the
+        # v2_5k profile. The 32D experiment uses native training augmentation.
+        native_train = train if self.profile == "exp32_loc_main" else False
+        return super().compute_loss(rng, observation, actions, train=native_train)
 
 
 @dataclasses.dataclass(frozen=True)
 class CSGOPi05WeightLoader:
     """Load ``pi05_base`` while adapting its native 32DoF action projections.
 
-    All non-action weights are loaded by exact key.  Missing LoRA leaves are
+    All non-action weights are loaded by exact key. Missing LoRA leaves are
     retained from the freshly initialized target graph, as in the native
-    ``CheckpointWeightLoader``.  The action projection slices are the only
-    shape adaptation performed here.
+    ``CheckpointWeightLoader``. A five-dimensional target receives the legacy
+    leading-five slice; a 32-dimensional target receives every action weight.
     """
 
     params_path: str = "gs://openpi-assets/checkpoints/pi05_base/params"
+    action_dim: int | None = None
+    profile: dataclasses.InitVar[CSGOProfile | None] = None
+
+    def __post_init__(self, profile: CSGOProfile | None) -> None:
+        if profile is not None and profile not in ("v2_5k", "exp32_loc_main"):
+            raise ValueError(f"Unknown CSGO profile {profile!r}.")
+        expected_action_dim = None if profile is None else (5 if profile == "v2_5k" else 32)
+        if self.action_dim is not None and self.action_dim not in (5, 32):
+            raise ValueError(f"CSGO weight loading supports action_dim=5 or action_dim=32, got {self.action_dim}.")
+        if expected_action_dim is not None:
+            if self.action_dim is not None and self.action_dim != expected_action_dim:
+                raise ValueError(f"Profile {profile!r} requires action_dim={expected_action_dim}.")
+            object.__setattr__(self, "action_dim", expected_action_dim)
+        object.__setattr__(self, "profile", profile)
 
     def load(self, params: at.Params) -> at.Params:
         loaded_params = _model.restore_params(download.maybe_download(self.params_path), restore_type=np.ndarray)
@@ -111,17 +163,39 @@ class CSGOPi05WeightLoader:
             reference = flat_ref[key]
             array = np.asarray(value)
             if key.endswith("action_in_proj/kernel"):
-                if array.ndim != 2 or array.shape[0] < 5 or array.shape[1] != reference.shape[1]:
+                target_action_dim = reference.shape[0]
+                if self.action_dim is not None and target_action_dim != self.action_dim:
+                    raise ValueError(
+                        f"Configured action_dim={self.action_dim} does not match target {key} shape {reference.shape}."
+                    )
+                if target_action_dim not in (5, 32) or array.ndim != 2 or array.shape[0] != 32:
                     raise ValueError(f"Unexpected {key} source shape {array.shape}; target shape is {reference.shape}")
-                array = array[:5, :]
+                if array.shape[1] != reference.shape[1]:
+                    raise ValueError(f"Unexpected {key} source shape {array.shape}; target shape is {reference.shape}")
+                array = array[:target_action_dim, :]
             elif key.endswith("action_out_proj/kernel"):
-                if array.ndim != 2 or array.shape[0] != reference.shape[0] or array.shape[1] < 5:
+                target_action_dim = reference.shape[1]
+                if self.action_dim is not None and target_action_dim != self.action_dim:
+                    raise ValueError(
+                        f"Configured action_dim={self.action_dim} does not match target {key} shape {reference.shape}."
+                    )
+                if (
+                    target_action_dim not in (5, 32)
+                    or array.ndim != 2
+                    or array.shape[0] != reference.shape[0]
+                    or array.shape[1] != 32
+                ):
                     raise ValueError(f"Unexpected {key} source shape {array.shape}; target shape is {reference.shape}")
-                array = array[:, :5]
+                array = array[:, :target_action_dim]
             elif key.endswith("action_out_proj/bias"):
-                if array.ndim != 1 or array.shape[0] < 5:
+                target_action_dim = reference.shape[0]
+                if self.action_dim is not None and target_action_dim != self.action_dim:
+                    raise ValueError(
+                        f"Configured action_dim={self.action_dim} does not match target {key} shape {reference.shape}."
+                    )
+                if target_action_dim not in (5, 32) or array.ndim != 1 or array.shape[0] != 32:
                     raise ValueError(f"Unexpected {key} source shape {array.shape}; target shape is {reference.shape}")
-                array = array[:5]
+                array = array[:target_action_dim]
 
             if array.shape != reference.shape:
                 raise ValueError(f"Shape mismatch at {key}: source {array.shape}, target {reference.shape}.")
@@ -139,4 +213,4 @@ class CSGOPi05WeightLoader:
         return traverse_util.unflatten_dict(result, sep="/")
 
 
-__all__ = ["CSGOPi0", "CSGOPi0Config", "CSGOPi05WeightLoader"]
+__all__ = ["CSGOPi0", "CSGOPi0Config", "CSGOPi05WeightLoader", "CSGOProfile"]

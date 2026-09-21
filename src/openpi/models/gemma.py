@@ -52,7 +52,29 @@ class Config:
     lora_configs: dict[str, lora.LoRAConfig] = dataclasses.field(default_factory=dict)
 
 
-Variant = Literal["dummy", "gemma_300m", "gemma_300m_lora", "gemma_2b", "gemma_2b_lora"]
+Variant = Literal[
+    "dummy",
+    "gemma_300m",
+    "gemma_300m_lora",
+    "gemma_300m_lora_r32",
+    "gemma_2b",
+    "gemma_2b_lora",
+    "gemma_2b_lora_r32",
+]
+
+
+def _peft_lora_configs() -> dict[str, lora.LoRAConfig]:
+    def make_config() -> lora.LoRAConfig:
+        return lora.LoRAConfig(
+            rank=32,
+            alpha=64.0,
+            a_init_fn=lora.peft_lora_a_init,
+            b_init_fn=nn.initializers.zeros,
+            rslora=False,
+            dropout=0.05,
+        )
+
+    return {"attn": make_config(), "ffn": make_config()}
 
 
 def get_config(variant: Variant) -> Config:
@@ -105,6 +127,27 @@ def get_config(variant: Variant) -> Config:
             num_kv_heads=1,
             head_dim=256,
             lora_configs={"attn": lora.LoRAConfig(rank=32, alpha=32.0), "ffn": lora.LoRAConfig(rank=32, alpha=32.0)},
+        )
+    if variant == "gemma_2b_lora_r32":
+        return Config(
+            width=2048,
+            depth=18,
+            mlp_dim=16_384,
+            num_heads=8,
+            num_kv_heads=1,
+            head_dim=256,
+            lora_configs=_peft_lora_configs(),
+        )
+    if variant == "gemma_300m_lora_r32":
+        # 311M params
+        return Config(
+            width=1024,
+            depth=18,
+            mlp_dim=4096,
+            num_heads=8,
+            num_kv_heads=1,
+            head_dim=256,
+            lora_configs=_peft_lora_configs(),
         )
     raise ValueError(f"Unknown variant: {variant}")
 
@@ -161,7 +204,7 @@ class Attention(nn.Module):
     configs: Sequence[Config]
 
     @nn.compact
-    def __call__(self, xs, positions, attn_mask, kv_cache):
+    def __call__(self, xs, positions, attn_mask, kv_cache, *, deterministic=True):
         # all experts must share the same head dim, num heads, and num kv heads for self-attention to work
         assert all(config.head_dim == self.configs[0].head_dim for config in self.configs)
         assert all(config.num_heads == self.configs[0].num_heads for config in self.configs)
@@ -180,7 +223,7 @@ class Attention(nn.Module):
                     init_fn=nn.initializers.lecun_normal(in_axis=-2, out_axis=-1, batch_axis=(0, 1)),
                     lora_config=config.lora_configs.get("attn"),
                 )
-                qkvs.append(qkv_einsum("BSD,3KDH->3BSKH", x))
+                qkvs.append(qkv_einsum("BSD,3KDH->3BSKH", x, deterministic=deterministic))
             else:
                 q_einsum = lora.Einsum(
                     shape=(config.num_heads, config.width, config.head_dim),
@@ -188,14 +231,14 @@ class Attention(nn.Module):
                     init_fn=nn.initializers.lecun_normal(in_axis=-2, out_axis=-1, batch_axis=(0,)),
                     lora_config=config.lora_configs.get("attn"),
                 )
-                q = q_einsum("BTD,NDH->BTNH", x)
+                q = q_einsum("BTD,NDH->BTNH", x, deterministic=deterministic)
                 kv_einsum = lora.Einsum(
                     shape=(2, config.num_kv_heads, config.width, config.head_dim),
                     name=_name("kv_einsum", i),
                     init_fn=nn.initializers.lecun_normal(in_axis=-2, out_axis=-1, batch_axis=(0, 1)),
                     lora_config=config.lora_configs.get("attn"),
                 )
-                k, v = kv_einsum("BSD,2KDH->2BSKH", x)
+                k, v = kv_einsum("BSD,2KDH->2BSKH", x, deterministic=deterministic)
                 qkvs.append((q, k, v))
 
         q, k, v = (jnp.concatenate(y, axis=1) for y in zip(*qkvs, strict=True))
@@ -241,7 +284,7 @@ class Attention(nn.Module):
                     init_fn=nn.initializers.lecun_normal(in_axis=(-3, -2), out_axis=-1),
                     lora_config=config.lora_configs.get("attn"),
                 )
-                out.append(out_einsum("BTNH,NHD->BTD", encoded[:, start:end]))
+                out.append(out_einsum("BTNH,NHD->BTD", encoded[:, start:end], deterministic=deterministic))
                 start = end
             else:
                 out.append(None)
@@ -305,7 +348,7 @@ class Block(nn.Module):
             gates.append(gate if x is not None else None)
 
         pre_attn = sharding.activation_sharding_constraint(pre_attn)
-        post_attn, kv_cache = attn(pre_attn, positions, attn_mask, kv_cache)
+        post_attn, kv_cache = attn(pre_attn, positions, attn_mask, kv_cache, deterministic=deterministic)
         post_attn = jax.tree.map(lambda x: drop(x, deterministic), post_attn)
         post_attn = sharding.activation_sharding_constraint(post_attn)
         xs = [_gated_residual(x, y, gate) for x, y, gate in zip(xs, post_attn, gates, strict=True)]
@@ -321,7 +364,7 @@ class Block(nn.Module):
                     hidden_dim=config.mlp_dim,
                     name=_name("mlp", i),
                     lora_config=config.lora_configs.get("ffn"),
-                )(x)
+                )(x, deterministic=deterministic)
             out.append(x)
             gates.append(gate if x is not None else None)
 

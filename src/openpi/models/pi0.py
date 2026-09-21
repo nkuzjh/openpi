@@ -16,6 +16,10 @@ from openpi.shared import array_typing as at
 logger = logging.getLogger("openpi")
 
 
+def _dropout_rngs(rng: at.KeyArrayLike, fold_in: at.Int[at.Array, ""]):
+    return nnx.Rngs(dropout=jax.random.fold_in(rng, fold_in))
+
+
 def make_attn_mask(input_mask, mask_ar):
     """Adapted from big_vision.
 
@@ -77,7 +81,20 @@ class Pi0(_model.BaseModel):
                 adarms=config.pi05,
             )
         )
-        llm.lazy_init(rngs=rngs, method="init", use_adarms=[False, True] if config.pi05 else [False, False])
+        has_lora_dropout = any(
+            lora_config.dropout > 0
+            for model_config in (paligemma_config, action_expert_config)
+            for lora_config in model_config.lora_configs.values()
+        )
+        if has_lora_dropout:
+            # Linen's bridge does not retain the construction RNGs after
+            # lazy_init, so LoRA dropout gets its own named stream at init and
+            # on each later call.
+            params_key = rngs.default.key.raw_value
+            llm_rngs = nnx.Rngs(params=params_key, dropout=jax.random.fold_in(params_key, 1))
+        else:
+            llm_rngs = rngs
+        llm.lazy_init(rngs=llm_rngs, method="init", use_adarms=[False, True] if config.pi05 else [False, False])
         img = nnx_bridge.ToNNX(
             _siglip.Module(
                 num_classes=paligemma_config.width,
@@ -190,6 +207,9 @@ class Pi0(_model.BaseModel):
         self, rng: at.KeyArrayLike, observation: _model.Observation, actions: _model.Actions, *, train: bool = False
     ) -> at.Float[at.Array, "*b ah"]:
         preprocess_rng, noise_rng, time_rng = jax.random.split(rng, 3)
+        # Keep the native flow-noise stream unchanged while deriving an
+        # independent stream for PEFT-style adapter dropout.
+        dropout_rngs = _dropout_rngs(rng, jnp.asarray(0xC5A0, dtype=jnp.uint32))
         observation = _model.preprocess_observation(preprocess_rng, observation, train=train)
 
         batch_shape = actions.shape[:-2]
@@ -207,7 +227,12 @@ class Pi0(_model.BaseModel):
         attn_mask = make_attn_mask(input_mask, ar_mask)
         positions = jnp.cumsum(input_mask, axis=1) - 1
         (prefix_out, suffix_out), _ = self.PaliGemma.llm(
-            [prefix_tokens, suffix_tokens], mask=attn_mask, positions=positions, adarms_cond=[None, adarms_cond]
+            [prefix_tokens, suffix_tokens],
+            mask=attn_mask,
+            positions=positions,
+            adarms_cond=[None, adarms_cond],
+            deterministic=self.deterministic,
+            rngs=dropout_rngs,
         )
         v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
 
@@ -234,10 +259,16 @@ class Pi0(_model.BaseModel):
         prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
         prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
         positions = jnp.cumsum(prefix_mask, axis=1) - 1
-        _, kv_cache = self.PaliGemma.llm([prefix_tokens, None], mask=prefix_attn_mask, positions=positions)
+        _, kv_cache = self.PaliGemma.llm(
+            [prefix_tokens, None],
+            mask=prefix_attn_mask,
+            positions=positions,
+            deterministic=self.deterministic,
+            rngs=_dropout_rngs(rng, jnp.asarray(0, dtype=jnp.uint32)),
+        )
 
         def step(carry):
-            x_t, time = carry
+            x_t, time, step_index = carry
             suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(
                 observation, x_t, jnp.broadcast_to(time, batch_size)
             )
@@ -264,16 +295,18 @@ class Pi0(_model.BaseModel):
                 positions=positions,
                 kv_cache=kv_cache,
                 adarms_cond=[None, adarms_cond],
+                deterministic=self.deterministic,
+                rngs=_dropout_rngs(rng, step_index + 1),
             )
             assert prefix_out is None
             v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
 
-            return x_t + dt * v_t, time + dt
+            return x_t + dt * v_t, time + dt, step_index + 1
 
         def cond(carry):
-            x_t, time = carry
+            _, time, _ = carry
             # robust to floating-point error
             return time >= -dt / 2
 
-        x_0, _ = jax.lax.while_loop(cond, step, (noise, 1.0))
+        x_0, _, _ = jax.lax.while_loop(cond, step, (noise, 1.0, jnp.asarray(0, dtype=jnp.uint32)))
         return x_0
