@@ -115,6 +115,8 @@ updates, and a `5e-5` peak and ending learning rate:
 RUN_FULL=1 scripts/run_csgo_seen10.sh train --profile exp32_loc_main --seed 0
 RUN_FULL=1 scripts/run_csgo_seen10.sh infer --profile exp32_loc_main --seed 0 --checkpoint-tag best
 RUN_FULL=1 scripts/run_csgo_seen10.sh eval --profile exp32_loc_main --seed 0 --checkpoint-tag best
+RUN_FULL=1 scripts/run_csgo_seen10.sh infer --profile exp32_loc_main --seed 0 --checkpoint-tag late
+RUN_FULL=1 scripts/run_csgo_seen10.sh eval --profile exp32_loc_main --seed 0 --checkpoint-tag late
 RUN_FULL=1 scripts/run_csgo_seen10.sh all --profile exp32_loc_main --seed 0
 RUN_FULL=0 scripts/run_csgo_seen10.sh smoke --profile exp32_loc_main --seed 0
 ```
@@ -129,6 +131,44 @@ Inference from `best` writes `localization/predictions.jsonl`; inference from
 `late` writes `localization_late/predictions.jsonl`, with separate manifests
 and evaluator reports. `all` runs inference and evaluation for both aliases.
 The default `best` output remains `localization` for existing commands.
+
+### commands
+```bash
+# 手动执行命令，等价上面的默认配置。正式训练须保持有效 batch 为 128；
+# 50,000 条 seen_train 数据与 128 都整除的 microbatch 仅可为 1、2、4、8 或 16。
+cd /home/jiahao/task/openpi
+export CSGO_PI05_BASE="$PWD/.cache/openpi/openpi-assets/checkpoints/pi05_base/params"
+
+set -o pipefail
+mkdir -p outputs/csgo_benchmark_v2_seen10/pi0.5_exp32_loc_main/seed_0
+RUN_FULL=1 scripts/run_csgo_seen10.sh train \
+  --profile exp32_loc_main \
+  --seed 0 \
+  --batch-size 16 \
+  --gradient-accumulation-steps 8 \
+  --effective-batch-size 128 \
+  2>&1 | tee outputs/csgo_benchmark_v2_seen10/pi0.5_exp32_loc_main/seed_0.train.log
+
+# 训练完成后分别评测 best 和 late：
+RUN_FULL=1 scripts/run_csgo_seen10.sh infer \
+  --profile exp32_loc_main --seed 0 --checkpoint-tag best
+RUN_FULL=1 scripts/run_csgo_seen10.sh eval \
+  --profile exp32_loc_main --seed 0 --checkpoint-tag best
+
+RUN_FULL=1 scripts/run_csgo_seen10.sh infer \
+  --profile exp32_loc_main --seed 0 --checkpoint-tag late
+RUN_FULL=1 scripts/run_csgo_seen10.sh eval \
+  --profile exp32_loc_main --seed 0 --checkpoint-tag late
+
+# 正式输出将位于：
+#     outputs/csgo_benchmark_v2_seen10/pi0.5_exp32_loc_main/seed_0/
+#     ├── checkpoints/{3900,7800,11700,15600,19500,best,late}
+#     ├── localization/predictions.jsonl
+#     ├── localization_late/predictions.jsonl
+#     ├── evaluation/localization/summary_equal_map.json
+#     └── evaluation/localization_late/summary_equal_map.json
+```
+
 
 ## Outputs
 

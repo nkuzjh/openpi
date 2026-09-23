@@ -10,6 +10,7 @@ the CSGO data module supplies manifest-driven rows and batches.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
+import contextlib
 import dataclasses
 import functools
 import hashlib
@@ -19,6 +20,7 @@ import logging
 import math
 import os
 import pathlib
+import sys
 import time
 from typing import Any
 
@@ -34,6 +36,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+from tqdm.auto import tqdm
 
 from openpi import transforms as _transforms
 from openpi.csgo import data as _csgo_data
@@ -1428,83 +1431,112 @@ def run_training(config: Seen10RuntimeConfig) -> dict[str, Any]:
     completed_step = start_step
     interval = config.interval
     started_at = time.monotonic()
+    # Training is normally launched through ``tee`` so the complete output is
+    # retained in ``*.train.log``.  In that setup stdout/stderr are pipes and
+    # tqdm's normal TTY auto-detection would hide the progress bar.  Write the
+    # transient display directly to the controlling terminal when available,
+    # keeping the persisted log clean.
+    progress_file = sys.stderr
+    with contextlib.suppress(OSError):
+        # The stream deliberately outlives this block and is closed below.
+        progress_file = open("/dev/tty", "w", encoding="utf-8")  # noqa: SIM115
+    progress = tqdm(
+        total=config.num_train_steps,
+        initial=start_step,
+        desc="CSGO Pi0.5 train",
+        unit="step",
+        dynamic_ncols=True,
+        mininterval=1.0,
+        file=progress_file,
+        disable=not progress_file.isatty(),
+    )
+    try:
+        while completed_step < config.num_train_steps:
+            prior_step = completed_step
+            train_batch = microbatches[0] if accumulation_steps == 1 else _stack_micro_batches(microbatches)
+            with _sharding.set_mesh(mesh):
+                train_state, info = ptrain_step(train_rng, train_state, train_batch)
+            completed_step = int(train_state.step)
+            info_values = {key: float(np.asarray(value)) for key, value in info.items()}
+            non_finite = {key: value for key, value in info_values.items() if not math.isfinite(value)}
+            if non_finite:
+                raise FloatingPointError(f"Non-finite training metrics at step {completed_step}: {non_finite}")
+            progress.update(completed_step - prior_step)
+            progress.set_postfix(
+                loss=f"{info_values['loss']:.6f}", grad=f"{info_values.get('grad_norm', 0.0):.4f}", refresh=False
+            )
+            if completed_step not in raw_existing:
+                _write_jsonl_append(
+                    loss_path,
+                    [{"step": completed_step, "loss": info_values["loss"], "grad_norm": info_values.get("grad_norm")}],
+                )
+                raw_existing.add(completed_step)
 
-    while completed_step < config.num_train_steps:
-        train_batch = microbatches[0] if accumulation_steps == 1 else _stack_micro_batches(microbatches)
-        with _sharding.set_mesh(mesh):
-            train_state, info = ptrain_step(train_rng, train_state, train_batch)
-        completed_step = int(train_state.step)
-        info_values = {key: float(np.asarray(value)) for key, value in info.items()}
-        non_finite = {key: value for key, value in info_values.items() if not math.isfinite(value)}
-        if non_finite:
-            raise FloatingPointError(f"Non-finite training metrics at step {completed_step}: {non_finite}")
-        if completed_step not in raw_existing:
-            _write_jsonl_append(
-                loss_path,
-                [{"step": completed_step, "loss": info_values["loss"], "grad_norm": info_values.get("grad_norm")}],
-            )
-            raw_existing.add(completed_step)
+            if completed_step % interval == 0 or completed_step == config.num_train_steps:
+                validation_loss = _validation_loss(
+                    train_state,
+                    val_loader,
+                    eval_fn=eval_fn,
+                    eval_seed=config.seed + 1_000_003,
+                    max_batches=validation_limit,
+                    action_dim=config.internal_action_dim,
+                )
+                should_be_best = validation_loss < best_loss
+                if should_be_best:
+                    best_loss, best_step = validation_loss, completed_step
+                _checkpoints.save_state(checkpoint_manager, train_state, train_loader, completed_step)
+                checkpoint_manager.wait_until_finished()
+                step_path = _step_checkpoint_path(checkpoint_dir, completed_step)
+                _write_checkpoint_identity(step_path, step=completed_step, config=config, model_config=model_config)
+                # Keep aliases usable if the process is interrupted after this
+                # checkpoint.  The final pass below repairs aliases on a resumed
+                # run, while these updates make every completed save discoverable.
+                _atomic_symlink(step_path, checkpoint_dir / "late")
+                metric_row = {
+                    "step": completed_step,
+                    "validation_loss": validation_loss,
+                    "is_best": bool(should_be_best),
+                    "checkpoint": str(step_path.resolve()),
+                    "seed": config.seed,
+                    "smoke_only": config.smoke_only,
+                }
+                existing_metrics_steps = {int(row["step"]) for row in _read_jsonl(metrics_path) if "step" in row}
+                if completed_step not in existing_metrics_steps:
+                    _write_jsonl_append(metrics_path, [metric_row])
+                if should_be_best:
+                    _atomic_symlink(step_path, checkpoint_dir / "best")
+                _call_visualization(
+                    config=config,
+                    split=VALIDATION_SPLIT,
+                    step=completed_step,
+                    params=train_state.params,
+                    sample_fn=sample_fn,
+                    input_transform=input_transform,
+                    norm_stats=norm_stats,
+                )
+                elapsed = max(time.monotonic() - started_at, 1e-6)
+                rate = max(completed_step - start_step, 1) / elapsed
+                remaining = max(config.num_train_steps - completed_step, 0)
+                logger.info(
+                    "progress=%d/%d (%.0f%%) rate=%.3f step/s eta=%.1fs loss=%.6f val=%.6f",
+                    completed_step,
+                    config.num_train_steps,
+                    100.0 * completed_step / config.num_train_steps,
+                    rate,
+                    remaining / rate,
+                    info_values["loss"],
+                    validation_loss,
+                )
 
-        if completed_step % interval == 0 or completed_step == config.num_train_steps:
-            validation_loss = _validation_loss(
-                train_state,
-                val_loader,
-                eval_fn=eval_fn,
-                eval_seed=config.seed + 1_000_003,
-                max_batches=validation_limit,
-                action_dim=config.internal_action_dim,
-            )
-            should_be_best = validation_loss < best_loss
-            if should_be_best:
-                best_loss, best_step = validation_loss, completed_step
-            _checkpoints.save_state(checkpoint_manager, train_state, train_loader, completed_step)
-            checkpoint_manager.wait_until_finished()
-            step_path = _step_checkpoint_path(checkpoint_dir, completed_step)
-            _write_checkpoint_identity(step_path, step=completed_step, config=config, model_config=model_config)
-            # Keep aliases usable if the process is interrupted after this
-            # checkpoint.  The final pass below repairs aliases on a resumed
-            # run, while these updates make every completed save discoverable.
-            _atomic_symlink(step_path, checkpoint_dir / "late")
-            metric_row = {
-                "step": completed_step,
-                "validation_loss": validation_loss,
-                "is_best": bool(should_be_best),
-                "checkpoint": str(step_path.resolve()),
-                "seed": config.seed,
-                "smoke_only": config.smoke_only,
-            }
-            existing_metrics_steps = {int(row["step"]) for row in _read_jsonl(metrics_path) if "step" in row}
-            if completed_step not in existing_metrics_steps:
-                _write_jsonl_append(metrics_path, [metric_row])
-            if should_be_best:
-                _atomic_symlink(step_path, checkpoint_dir / "best")
-            _call_visualization(
-                config=config,
-                split=VALIDATION_SPLIT,
-                step=completed_step,
-                params=train_state.params,
-                sample_fn=sample_fn,
-                input_transform=input_transform,
-                norm_stats=norm_stats,
-            )
-            elapsed = max(time.monotonic() - started_at, 1e-6)
-            rate = max(completed_step - start_step, 1) / elapsed
-            remaining = max(config.num_train_steps - completed_step, 0)
-            logger.info(
-                "progress=%d/%d (%.0f%%) rate=%.3f step/s eta=%.1fs loss=%.6f val=%.6f",
-                completed_step,
-                config.num_train_steps,
-                100.0 * completed_step / config.num_train_steps,
-                rate,
-                remaining / rate,
-                info_values["loss"],
-                validation_loss,
-            )
-
-        if completed_step < config.num_train_steps:
-            microbatches = [
-                _coerce_batch(next(data_iter), action_dim=config.internal_action_dim) for _ in range(accumulation_steps)
-            ]
+            if completed_step < config.num_train_steps:
+                microbatches = [
+                    _coerce_batch(next(data_iter), action_dim=config.internal_action_dim)
+                    for _ in range(accumulation_steps)
+                ]
+    finally:
+        progress.close()
+        if progress_file is not sys.stderr:
+            progress_file.close()
 
     checkpoint_manager.wait_until_finished()
     steps = sorted(int(step) for step in checkpoint_manager.all_steps())
