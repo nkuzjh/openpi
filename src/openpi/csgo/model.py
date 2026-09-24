@@ -27,16 +27,17 @@ from openpi.shared import array_typing as at
 from openpi.shared import download
 from openpi.shared import nnx_utils
 
-CSGOProfile = Literal["v2_5k", "exp32_loc_main"]
+CSGOProfile = Literal["v2_5k", "exp32_loc_main", "exp32_loc_main_frozen_vl"]
+EXP32_PROFILES = ("exp32_loc_main", "exp32_loc_main_frozen_vl")
 
 
 @dataclasses.dataclass(frozen=True)
 class CSGOPi0Config(_pi0_config.Pi0Config):
     """Configuration for a CSGO localization Pi0.5 profile.
 
-    ``v2_5k`` is the legacy five-dimensional profile. ``exp32_loc_main`` uses
-    the full 32-dimensional Pi0.5 action projection and PEFT-style rank-32
-    adapters. ``profile`` is an InitVar so it does not change the serialized
+    ``v2_5k`` is the legacy five-dimensional profile. Both 32D profiles use
+    the full Pi0.5 action projection and PEFT-style rank-32 adapters.
+    ``profile`` is an InitVar so it does not change the serialized
     legacy model-config keys used by existing run metadata.
     """
 
@@ -48,8 +49,8 @@ class CSGOPi0Config(_pi0_config.Pi0Config):
     action_expert_variant: _gemma.Variant | None = None
 
     def __post_init__(self, profile: CSGOProfile) -> None:
-        if profile not in ("v2_5k", "exp32_loc_main"):
-            raise ValueError(f"Unknown CSGO profile {profile!r}; choose 'v2_5k' or 'exp32_loc_main'.")
+        if profile not in ("v2_5k", *EXP32_PROFILES):
+            raise ValueError(f"Unknown CSGO profile {profile!r}; choose 'v2_5k' or one of {EXP32_PROFILES!r}.")
         action_dim = 5 if profile == "v2_5k" else 32
         if self.action_dim is not None and self.action_dim != action_dim:
             raise ValueError(f"CSGO profile {profile!r} requires action_dim={action_dim}.")
@@ -60,14 +61,14 @@ class CSGOPi0Config(_pi0_config.Pi0Config):
         if self.action_horizon != 1:
             raise ValueError("CSGO localization requires action_horizon=1.")
 
-        if profile == "exp32_loc_main":
+        if profile in EXP32_PROFILES:
             if self.discrete_state_input is True:
-                raise ValueError("The exp32_loc_main profile requires discrete_state_input=False.")
+                raise ValueError(f"The {profile} profile requires discrete_state_input=False.")
             required_variants = ("gemma_2b_lora_r32", "gemma_300m_lora_r32")
             if self.paligemma_variant not in (None, required_variants[0]):
-                raise ValueError(f"exp32_loc_main requires paligemma_variant={required_variants[0]!r}.")
+                raise ValueError(f"{profile} requires paligemma_variant={required_variants[0]!r}.")
             if self.action_expert_variant not in (None, required_variants[1]):
-                raise ValueError(f"exp32_loc_main requires action_expert_variant={required_variants[1]!r}.")
+                raise ValueError(f"{profile} requires action_expert_variant={required_variants[1]!r}.")
             object.__setattr__(self, "paligemma_variant", required_variants[0])
             object.__setattr__(self, "action_expert_variant", required_variants[1])
         else:
@@ -75,7 +76,7 @@ class CSGOPi0Config(_pi0_config.Pi0Config):
             object.__setattr__(self, "action_expert_variant", self.action_expert_variant or "gemma_300m_lora")
 
         super().__post_init__()
-        if profile == "exp32_loc_main":
+        if profile in EXP32_PROFILES:
             object.__setattr__(self, "discrete_state_input", False)
         object.__setattr__(self, "profile", profile)
 
@@ -88,15 +89,14 @@ class CSGOPi0Config(_pi0_config.Pi0Config):
         """Freeze base language weights and the SigLIP encoder.
 
         ``Pi0Config.get_freeze_filter`` already freezes the non-LoRA Gemma
-        weights. The legacy profile also freezes the full image module, as it
-        did before profiles were introduced. In ``exp32_loc_main``, the SigLIP
-        encoder is frozen while ``PaliGemma/img/head`` remains trainable as the
-        image-to-language-width connector. Action projections and the Pi0.5
-        time MLP remain trainable.
+        weights. The legacy and frozen-VL profiles freeze the full image
+        module. In ``exp32_loc_main``, the SigLIP encoder is frozen while
+        ``PaliGemma/img/head`` remains trainable. Action projections and the
+        Pi0.5 time MLP remain trainable in both 32D profiles.
         """
 
         native_filter = super().get_freeze_filter()
-        if self.profile == "v2_5k":
+        if self.profile in ("v2_5k", "exp32_loc_main_frozen_vl"):
             image_filter = nnx_utils.PathRegex(".*img.*")
         else:
             image_filter = nnx_utils.PathRegex(r".*PaliGemma/img/(?!head(?:/|$)).*")
@@ -120,8 +120,8 @@ class CSGOPi0(_pi0.Pi0):
         train: bool = False,
     ) -> at.Float[at.Array, "*b ah"]:
         # Preserve the historical label-safe inference preprocessing in the
-        # v2_5k profile. The 32D experiment uses native training augmentation.
-        native_train = train if self.profile == "exp32_loc_main" else False
+        # v2_5k profile. Both 32D experiments use native training augmentation.
+        native_train = train if self.profile in EXP32_PROFILES else False
         return super().compute_loss(rng, observation, actions, train=native_train)
 
 
@@ -140,7 +140,7 @@ class CSGOPi05WeightLoader:
     profile: dataclasses.InitVar[CSGOProfile | None] = None
 
     def __post_init__(self, profile: CSGOProfile | None) -> None:
-        if profile is not None and profile not in ("v2_5k", "exp32_loc_main"):
+        if profile is not None and profile not in ("v2_5k", *EXP32_PROFILES):
             raise ValueError(f"Unknown CSGO profile {profile!r}.")
         expected_action_dim = None if profile is None else (5 if profile == "v2_5k" else 32)
         if self.action_dim is not None and self.action_dim not in (5, 32):

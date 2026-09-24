@@ -35,7 +35,7 @@ DEFAULT_OUTPUT_BASE = ROOT / "outputs" / "csgo_benchmark_v2_seen10" / "pi0.5"
 
 
 def _default_run_dir(seed: int, *, profile: str, smoke: bool) -> Path:
-    profile_path = "pi0.5" if profile == "v2_5k" else "pi0.5_exp32_loc_main"
+    profile_path = "pi0.5" if profile == "v2_5k" else f"pi0.5_{profile}"
     if smoke:
         stamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%d_%H%M%S_%f")
         return ROOT / "outputs" / "csgo_benchmark_v2_smoke" / profile_path / f"seed_{seed}" / stamp
@@ -121,7 +121,7 @@ def _apply_smoke_defaults(args: argparse.Namespace, *, profile_name: str) -> Non
     if args.num_train_steps is None:
         args.num_train_steps = 5
     if args.batch_size is None:
-        # exp32_loc_main's formal batch is 128. A one-sample microbatch and
+        # The 32D profiles' formal batch is 128. A one-sample microbatch and
         # one update are the safe smoke defaults on a single accelerator. A
         # multi-device loader needs at least one sample for every device.
         args.batch_size = max(1, jax.device_count())

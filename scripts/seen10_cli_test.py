@@ -61,6 +61,36 @@ def test_exp32_smoke_defaults_to_small_batch_and_profile_run_dir(
     )
 
 
+def test_frozen_vl_cli_paths_and_saved_profile_restore(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch):
+    profile = "exp32_loc_main_frozen_vl"
+    monkeypatch.setattr(sys, "argv", ["train_seen10.py", "--profile", profile, "--smoke"])
+    args = train_seen10.parse_args()
+    train_seen10._apply_smoke_defaults(args, profile_name=profile)
+    assert args.experiment_profile == profile
+    assert args.batch_size == max(1, train_seen10.jax.device_count())
+    assert train_seen10._default_run_dir(0, profile=profile, smoke=False).parts[-2:] == (
+        "pi0.5_exp32_loc_main_frozen_vl",
+        "seed_0",
+    )
+    assert infer_seen10._default_run_dir(0, profile=profile, smoke=False).parts[-2:] == (
+        "pi0.5_exp32_loc_main_frozen_vl",
+        "seed_0",
+    )
+    assert "pi0.5_exp32_loc_main_frozen_vl" in train_seen10._default_run_dir(0, profile=profile, smoke=True).parts
+    assert "pi0.5_exp32_loc_main_frozen_vl" in infer_seen10._default_run_dir(0, profile=profile, smoke=True).parts
+
+    from openpi.csgo.runtime import save_runtime_config
+
+    config = make_runtime_config(data_root=tmp_path, run_dir=tmp_path / "saved", experiment_profile=profile)
+    save_runtime_config(config)
+    assert train_seen10._resume_profile(config.run_dir, None)[0] == profile
+    assert infer_seen10._inference_profile(config.run_dir, None)[0] == profile
+    with pytest.raises(SystemExit, match="conflicts with run_config profile"):
+        train_seen10._resume_profile(config.run_dir, "exp32_loc_main")
+    with pytest.raises(SystemExit, match="conflicts with run_config profile"):
+        infer_seen10._inference_profile(config.run_dir, "exp32_loc_main")
+
+
 def test_infer_cli_late_tag_selects_separate_prediction_directory(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(sys, "argv", ["infer_seen10.py", "--checkpoint-tag", "late"])
     args = infer_seen10.parse_args()

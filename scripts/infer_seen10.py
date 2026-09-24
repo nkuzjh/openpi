@@ -35,7 +35,7 @@ DEFAULT_OUTPUT_BASE = ROOT / "outputs" / "csgo_benchmark_v2_seen10" / "pi0.5"
 
 
 def _default_run_dir(seed: int, *, profile: str, smoke: bool) -> Path:
-    profile_path = "pi0.5" if profile == "v2_5k" else "pi0.5_exp32_loc_main"
+    profile_path = "pi0.5" if profile == "v2_5k" else f"pi0.5_{profile}"
     if smoke:
         stamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%d_%H%M%S_%f")
         return ROOT / "outputs" / "csgo_benchmark_v2_smoke" / profile_path / f"seed_{seed}" / stamp
@@ -130,6 +130,7 @@ def main() -> int:
         checkpoint=checkpoint,
         max_samples=args.max_samples,
         output_name=output_name,
+        requested_profile=args.experiment_profile,
     )
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0

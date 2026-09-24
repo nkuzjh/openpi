@@ -176,27 +176,32 @@ class Seen10RuntimeConfig:
                 f"Profile {profile.name!r} requires discrete_state_input={profile.discrete_state_input}, "
                 f"got {self.discrete_state_input}"
             )
-        if profile.name == "exp32_loc_main" and not self.smoke_only:
+        if profile.name in ("exp32_loc_main", "exp32_loc_main_frozen_vl") and not self.smoke_only:
             if self.num_train_steps != profile.num_train_steps:
-                raise ValueError(f"Formal exp32_loc_main requires {profile.num_train_steps} optimizer updates")
+                raise ValueError(f"Formal {profile.name} requires {profile.num_train_steps} optimizer updates")
             if self.effective_batch_size != profile.effective_batch_size:
-                raise ValueError(f"Formal exp32_loc_main requires effective_batch_size={profile.effective_batch_size}")
+                raise ValueError(f"Formal {profile.name} requires effective_batch_size={profile.effective_batch_size}")
             if (self.learning_rate, self.warmup_steps, self.decay_steps, self.decay_lr) != (
                 profile.learning_rate,
                 profile.warmup_steps,
                 profile.decay_steps,
                 profile.decay_lr,
             ):
-                raise ValueError("Formal exp32_loc_main learning-rate settings are fixed by the profile")
+                raise ValueError(f"Formal {profile.name} learning-rate settings are fixed by the profile")
             if (self.paligemma_variant, self.action_expert_variant) != (
                 profile.paligemma_variant,
                 profile.action_expert_variant,
             ):
-                raise ValueError("Formal exp32_loc_main model variants are fixed by the profile")
+                raise ValueError(f"Formal {profile.name} model variants are fixed by the profile")
 
     @property
     def interval(self) -> int:
+        if self.experiment_profile == "exp32_loc_main_frozen_vl" and not self.smoke_only:
+            return 4_000
         return self.num_train_steps // 5
+
+    def is_checkpoint_step(self, step: int) -> bool:
+        return step > 0 and (step % self.interval == 0 or step == self.num_train_steps)
 
 
 def make_runtime_config(
@@ -1176,7 +1181,7 @@ def _reconcile_resumed_checkpoints(
             _write_checkpoint_identity(step_path, step=step, config=config, model_config=model_config)
 
     for step in steps:
-        is_milestone = step > 0 and (step % config.interval == 0 or step == config.num_train_steps)
+        is_milestone = config.is_checkpoint_step(step)
         if not is_milestone or step in metric_steps:
             continue
         if step == int(train_state.step):
@@ -1304,7 +1309,7 @@ def _render_inference_visualization(
 
 
 def run_training(config: Seen10RuntimeConfig) -> dict[str, Any]:
-    """Run native training with exactly five validation/save milestones."""
+    """Run native training with five validation/save milestones."""
 
     if config.resume and (config.run_dir / "run_config.json").is_file():
         config = _restore_training_config(config)
@@ -1429,7 +1434,6 @@ def run_training(config: Seen10RuntimeConfig) -> dict[str, Any]:
     )
     raw_existing = {int(row["step"]) for row in _read_jsonl(loss_path) if "step" in row}
     completed_step = start_step
-    interval = config.interval
     started_at = time.monotonic()
     # Training is normally launched through ``tee`` so the complete output is
     # retained in ``*.train.log``.  In that setup stdout/stderr are pipes and
@@ -1472,7 +1476,7 @@ def run_training(config: Seen10RuntimeConfig) -> dict[str, Any]:
                 )
                 raw_existing.add(completed_step)
 
-            if completed_step % interval == 0 or completed_step == config.num_train_steps:
+            if config.is_checkpoint_step(completed_step):
                 validation_loss = _validation_loss(
                     train_state,
                     val_loader,
@@ -1725,6 +1729,7 @@ def run_inference(
     checkpoint: str | pathlib.Path | None = None,
     max_samples: int | None = None,
     output_name: str | None = None,
+    requested_profile: str | None = None,
 ) -> dict[str, Any]:
     """Run resumable localization inference and emit the strict JSONL contract."""
 
@@ -1735,7 +1740,15 @@ def run_inference(
     if not params_path.is_dir():
         raise FileNotFoundError(f"Checkpoint params directory not found: {params_path}")
     checkpoint_identity = _checkpoint_identity(checkpoint_path)
+    identity_profile = checkpoint_identity.get("experiment_profile", checkpoint_identity.get("profile"))
+    if requested_profile is not None and identity_profile is not None and requested_profile != identity_profile:
+        raise ValueError(
+            f"Checkpoint profile {identity_profile!r} does not match requested profile {requested_profile!r}"
+        )
     config = _restore_model_settings(config, checkpoint_identity=checkpoint_identity)
+    if not config.smoke_only and checkpoint_identity.get("smoke_only"):
+        raise ValueError("Formal inference cannot use a smoke-only checkpoint")
+    _validate_checkpoint_profile(config, checkpoint_identity)
     if split not in (VALIDATION_SPLIT, TEST_SPLIT):
         raise ValueError(f"Localization inference supports {VALIDATION_SPLIT!r} and {TEST_SPLIT!r}")
     if not config.smoke_only and max_samples is not None:
@@ -1755,9 +1768,6 @@ def run_inference(
     if not config.smoke_only and split == TEST_SPLIT and len(rows) != 20_000:
         raise ValueError(f"Formal Seen-10 inference requires exactly 20,000 rows, got {len(rows)}")
 
-    if not config.smoke_only and checkpoint_identity.get("smoke_only"):
-        raise ValueError("Formal inference cannot use a smoke-only checkpoint")
-    _validate_checkpoint_profile(config, checkpoint_identity)
     norm_stats = _load_profile_norm_stats(config, checkpoint_path=checkpoint_path)
     output_root = config.run_dir / output_name
     output_path = output_root / "predictions.jsonl"

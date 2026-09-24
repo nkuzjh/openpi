@@ -1,7 +1,7 @@
 """Named training profiles for the native CSGO localization runtime.
 
 Profiles keep benchmark contracts in one place.  ``v2_5k`` mirrors the
-original Seen-10 runtime defaults; ``exp32_loc_main`` records the long-run
+original Seen-10 runtime defaults; the ``exp32_loc_main`` profiles record the long-run
 32D-action experiment settings.  Runtime and CLI overrides are validated in
 ``runtime.py`` so smoke runs can shorten a profile without changing its
 identity.
@@ -85,9 +85,14 @@ EXP32_LOC_MAIN = ExperimentProfile(
     discrete_state_input=False,
 )
 
+EXP32_LOC_MAIN_FROZEN_VL = dataclasses.replace(
+    EXP32_LOC_MAIN, name="exp32_loc_main_frozen_vl", use_augmentation=False
+)
+
 PROFILES: Mapping[str, ExperimentProfile] = {
     V2_5K.name: V2_5K,
     EXP32_LOC_MAIN.name: EXP32_LOC_MAIN,
+    EXP32_LOC_MAIN_FROZEN_VL.name: EXP32_LOC_MAIN_FROZEN_VL,
 }
 
 
@@ -107,4 +112,12 @@ def profile_names() -> tuple[str, ...]:
     return tuple(PROFILES)
 
 
-__all__ = ["EXP32_LOC_MAIN", "PROFILES", "V2_5K", "ExperimentProfile", "get_profile", "profile_names"]
+__all__ = [
+    "EXP32_LOC_MAIN",
+    "EXP32_LOC_MAIN_FROZEN_VL",
+    "PROFILES",
+    "V2_5K",
+    "ExperimentProfile",
+    "get_profile",
+    "profile_names",
+]

@@ -17,7 +17,7 @@ export OPENPI_DATA_HOME="${OPENPI_DATA_HOME:-${PROJECT_ROOT}/.cache/openpi}"
 export JAX_COMPILATION_CACHE_DIR="${JAX_COMPILATION_CACHE_DIR:-${PROJECT_ROOT}/.cache/jax}"
 
 if [[ $# -lt 1 ]]; then
-  echo "Usage: $0 {train|infer|eval|smoke|all} [--seed N] [--profile v2_5k|exp32_loc_main] [options...]" >&2
+  echo "Usage: $0 {train|infer|eval|smoke|all} [--seed N] [--profile v2_5k|exp32_loc_main|exp32_loc_main_frozen_vl] [options...]" >&2
   exit 2
 fi
 
@@ -160,7 +160,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -n "$PROFILE" && "$PROFILE" != "v2_5k" && "$PROFILE" != "exp32_loc_main" ]]; then
+if [[ -n "$PROFILE" && "$PROFILE" != "v2_5k" && "$PROFILE" != "exp32_loc_main" && "$PROFILE" != "exp32_loc_main_frozen_vl" ]]; then
   echo "Unknown profile: $PROFILE" >&2
   exit 2
 fi
@@ -176,7 +176,7 @@ fi
 if [[ -z "$PROFILE" || "$PROFILE" == "v2_5k" ]]; then
   PROFILE_DIR="pi0.5"
 else
-  PROFILE_DIR="pi0.5_exp32_loc_main"
+  PROFILE_DIR="pi0.5_${PROFILE}"
 fi
 if [[ -n "$RUN_DIR_OVERRIDE" ]]; then
   RUN_ROOT="$RUN_DIR_OVERRIDE"

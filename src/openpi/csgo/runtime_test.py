@@ -22,6 +22,8 @@ import pytest
 
 from openpi import transforms as _transforms
 from openpi.csgo import runtime
+from openpi.csgo.profiles import EXP32_LOC_MAIN
+from openpi.csgo.profiles import EXP32_LOC_MAIN_FROZEN_VL
 from openpi.models import model as _model
 from openpi.shared.normalize import NormStats
 from openpi.training import utils as _training_utils
@@ -100,6 +102,50 @@ def test_profile_defaults_and_formal_contract(tmp_path: pathlib.Path):
         )
 
 
+def test_frozen_vl_inherits_exp32_contract_and_formal_enforcement(tmp_path: pathlib.Path):
+    assert dataclasses.replace(
+        EXP32_LOC_MAIN, name=EXP32_LOC_MAIN_FROZEN_VL.name, use_augmentation=False
+    ) == EXP32_LOC_MAIN_FROZEN_VL
+    main = runtime.make_runtime_config(
+        data_root=tmp_path, run_dir=tmp_path / "main", experiment_profile="exp32_loc_main"
+    )
+    frozen = runtime.make_runtime_config(
+        data_root=tmp_path, run_dir=tmp_path / "frozen", experiment_profile="exp32_loc_main_frozen_vl"
+    )
+    assert dataclasses.replace(
+        main, run_dir=frozen.run_dir, experiment_profile=frozen.experiment_profile, use_augmentation=False
+    ) == frozen
+    assert main.use_augmentation
+    assert not frozen.use_augmentation
+    assert frozen.effective_batch_size == 128
+    assert frozen.num_train_steps == 19_500
+    assert frozen.interval == 4_000
+    assert [step for step in range(1, frozen.num_train_steps + 1) if frozen.is_checkpoint_step(step)] == [
+        4_000,
+        8_000,
+        12_000,
+        16_000,
+        19_500,
+    ]
+    assert main.interval == 3_900
+    frozen_smoke = dataclasses.replace(frozen, smoke_only=True, num_train_steps=10)
+    assert frozen_smoke.interval == 2
+    assert [step for step in range(1, 11) if frozen_smoke.is_checkpoint_step(step)] == [2, 4, 6, 8, 10]
+    for override, pattern in (
+        ({"num_train_steps": 5}, "optimizer updates"),
+        ({"batch_size": 1, "gradient_accumulation_steps": 1}, "effective_batch_size=128"),
+        ({"learning_rate": 1e-4}, "learning-rate settings"),
+        ({"paligemma_variant": "gemma_2b_lora"}, "model variants"),
+    ):
+        with pytest.raises(ValueError, match=pattern):
+            runtime.make_runtime_config(
+                data_root=tmp_path,
+                run_dir=tmp_path / "invalid",
+                experiment_profile="exp32_loc_main_frozen_vl",
+                **override,
+            )
+
+
 def test_native_transform_and_profile_pipeline_pad_after_normalization(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -161,6 +207,24 @@ def test_native_transform_and_profile_pipeline_pad_after_normalization(
     np.testing.assert_array_equal(result["actions"][:5], np.arange(5, dtype=np.float32) + 10.0)
     np.testing.assert_array_equal(result["actions"][5:], np.zeros(27, dtype=np.float32))
     assert result["state"].shape == (32,)
+
+
+def test_frozen_vl_skips_custom_fpv_dropout(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch):
+    config = runtime.make_runtime_config(
+        data_root=tmp_path, run_dir=tmp_path / "frozen", experiment_profile="exp32_loc_main_frozen_vl"
+    )
+
+    def unexpected_import(name: str):
+        raise AssertionError(f"Unexpected augmentation import: {name}")
+
+    monkeypatch.setattr(runtime, "importlib", SimpleNamespace(import_module=unexpected_import))
+    native_transform = _transforms.CompositeTransform(
+        (lambda sample: dict(sample), _transforms.PadStatesAndActions(32))
+    )
+    wrapped = runtime._profile_sample_transform(config, native_transform, split="seen_train", norm_stats=None)
+    result = wrapped({"state": np.arange(5, dtype=np.float32), "actions": np.arange(5, dtype=np.float32)})
+    assert result["state"].shape == (32,)
+    np.testing.assert_array_equal(result["actions"][:5], np.arange(5, dtype=np.float32))
 
 
 def test_prediction_uses_first_five_dimensions_then_inverse_normalizes(tmp_path: pathlib.Path):
@@ -309,6 +373,37 @@ def test_current_legacy_seed0_run_config_resumes_without_rewrite():
     assert config_path.read_bytes() == original_bytes
 
 
+def test_frozen_vl_restores_from_checkpoint_identity_and_rejects_cross_profile(tmp_path: pathlib.Path):
+    profile = "exp32_loc_main_frozen_vl"
+    checkpoint = tmp_path / "checkpoints" / "1000"
+    (checkpoint / "params").mkdir(parents=True)
+    frozen = runtime.make_runtime_config(data_root=tmp_path, run_dir=tmp_path / "run", experiment_profile=profile)
+    identity = runtime._write_checkpoint_identity(
+        checkpoint, step=1000, config=frozen, model_config=runtime._model_config_from_runtime(frozen)
+    )
+    assert identity["experiment_profile"] == profile
+    restored = runtime._restore_model_settings(
+        runtime.make_runtime_config(data_root=tmp_path, run_dir=tmp_path / "no_run_config"),
+        checkpoint_identity=identity,
+    )
+    assert restored.experiment_profile == profile
+    assert restored.internal_action_dim == 32
+
+    with pytest.raises(ValueError, match="does not match requested profile"):
+        runtime.run_inference(frozen, checkpoint=checkpoint, requested_profile="exp32_loc_main")
+    main = runtime.make_runtime_config(
+        data_root=tmp_path, run_dir=tmp_path / "main", experiment_profile="exp32_loc_main"
+    )
+    runtime.save_runtime_config(main)
+    with pytest.raises(ValueError, match="does not match run profile"):
+        runtime.run_inference(main, checkpoint=checkpoint)
+
+    runtime.save_runtime_config(frozen)
+    restored_run = runtime._restore_training_config(dataclasses.replace(frozen, resume=True))
+    assert restored_run.experiment_profile == profile
+    runtime.save_runtime_config(restored_run)
+
+
 def test_resume_recovers_metrics_and_aliases_after_checkpoint_commit(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -348,6 +443,46 @@ def test_resume_recovers_metrics_and_aliases_after_checkpoint_commit(
     assert (checkpoint_dir / "late").resolve() == saved_checkpoint.resolve()
     assert (checkpoint_dir / "best").resolve() == saved_checkpoint.resolve()
     assert (best_loss, best_step) == (0.25, 1000)
+
+
+def test_frozen_vl_resume_validates_final_checkpoint_and_preserves_best_alias(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+):
+    run_dir = tmp_path / "frozen"
+    checkpoint_dir = run_dir / "checkpoints"
+    steps = (4_000, 8_000, 12_000, 16_000, 19_500)
+    for step in steps:
+        (checkpoint_dir / str(step)).mkdir(parents=True)
+    config = runtime.make_runtime_config(
+        data_root=tmp_path,
+        run_dir=run_dir,
+        experiment_profile="exp32_loc_main_frozen_vl",
+        resume=True,
+    )
+    runtime._write_jsonl_append(
+        run_dir / "train_metrics.jsonl",
+        [{"step": step, "validation_loss": loss} for step, loss in zip(steps[:-1], (0.4, 0.2, 0.3, 0.5), strict=True)],
+    )
+
+    class CheckpointManager:
+        def all_steps(self):
+            return steps
+
+    monkeypatch.setattr(runtime, "_validation_loss", lambda *args, **kwargs: 0.35)
+    best_loss, best_step = runtime._reconcile_resumed_checkpoints(
+        config=config,
+        model_config=runtime._model_config_from_runtime(config),
+        checkpoint_manager=CheckpointManager(),
+        train_state=SimpleNamespace(step=jnp.asarray(19_500, dtype=jnp.int32)),
+        train_loader=(),
+        val_loader=(),
+        eval_fn=object(),
+    )
+
+    assert [row["step"] for row in runtime._read_jsonl(run_dir / "train_metrics.jsonl")] == list(steps)
+    assert (best_loss, best_step) == (0.2, 8_000)
+    assert (checkpoint_dir / "best").resolve() == (checkpoint_dir / "8000").resolve()
+    assert (checkpoint_dir / "late").resolve() == (checkpoint_dir / "19500").resolve()
 
 
 @pytest.mark.parametrize(

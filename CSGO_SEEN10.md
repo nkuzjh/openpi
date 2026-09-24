@@ -170,12 +170,55 @@ RUN_FULL=1 scripts/run_csgo_seen10.sh eval \
 ```
 
 
+### Frozen vision-language projector comparison
+
+`exp32_loc_main_frozen_vl` adds a control for UniLIP `exp32_loc`: it freezes
+`PaliGemma/img/head` (the vision-to-language projector), whereas
+`exp32_loc_main` trains it. This profile keeps only native Pi0.5 image
+augmentation: FPV crop/resize/rotation and FPV/radar color jitter during
+training. Extra FPV CoarseDropout, GridDropout and RandomErasing are disabled
+(`use_augmentation=False` controls these extra transforms, not native augmentation).
+LoRA, normalization, effective batch 128 and 19,500 updates remain aligned.
+This profile validates and saves at steps 4,000, 8,000, 12,000,
+16,000 and the final 19,500. `best` links to the saved step with the lowest
+validation loss; `late` links to the latest saved step (19,500 on completion).
+Bounded smoke runs keep their existing five save milestones. Start from the original
+`pi05_base`, not an aligned checkpoint. This profile is implemented; no formal
+training or evaluation result is claimed here.
+
+Outputs are isolated under
+`outputs/csgo_benchmark_v2_seen10/pi0.5_exp32_loc_main_frozen_vl/seed_<seed>/`,
+with the same `localization`, `localization_late` and evaluation layout as
+aligned. Run in a fresh directory; use `--resume` only to continue this same
+profile's run.
+
+```bash
+cd /home/jiahao/task/openpi
+export CSGO_PI05_BASE="$PWD/.cache/openpi/openpi-assets/checkpoints/pi05_base/params"
+set -o pipefail
+mkdir -p outputs/csgo_benchmark_v2_seen10/pi0.5_exp32_loc_main_frozen_vl
+RUN_FULL=1 scripts/run_csgo_seen10.sh train \
+  --profile exp32_loc_main_frozen_vl --seed 0 \
+  --batch-size 16 --gradient-accumulation-steps 8 --effective-batch-size 128 \
+  2>&1 | tee outputs/csgo_benchmark_v2_seen10/pi0.5_exp32_loc_main_frozen_vl/seed_0.train.log
+
+RUN_FULL=1 scripts/run_csgo_seen10.sh infer --profile exp32_loc_main_frozen_vl --seed 0 --checkpoint-tag best
+RUN_FULL=1 scripts/run_csgo_seen10.sh eval --profile exp32_loc_main_frozen_vl --seed 0 --checkpoint-tag best
+RUN_FULL=1 scripts/run_csgo_seen10.sh infer --profile exp32_loc_main_frozen_vl --seed 0 --checkpoint-tag late
+RUN_FULL=1 scripts/run_csgo_seen10.sh eval --profile exp32_loc_main_frozen_vl --seed 0 --checkpoint-tag late
+```
+
+Alternatively, replace the train/infer/eval sequence with
+`RUN_FULL=1 scripts/run_csgo_seen10.sh all --profile exp32_loc_main_frozen_vl --seed 0 --batch-size 16 --gradient-accumulation-steps 8`.
+For a separate bounded smoke run:
+`RUN_FULL=0 scripts/run_csgo_seen10.sh smoke --profile exp32_loc_main_frozen_vl --seed 0`.
+
 ## Outputs
 
 Formal `v2_5k` runs use
 `outputs/csgo_benchmark_v2_seen10/pi0.5/seed_<seed>`; `exp32_loc_main` uses
-the separate profile path above. Checkpoints are saved at five equal
-completed-step intervals under `checkpoints/<step>/`, with
+the separate profile path above. Checkpoints are saved at the five profile-specific
+milestones described above under `checkpoints/<step>/`, with
 `checkpoints/late` and `checkpoints/best` symlinks. Training writes
 `run_config.json`, `loss.jsonl`, `train_metrics.jsonl`, `loss.png`, and fixed
 validation visualizations.

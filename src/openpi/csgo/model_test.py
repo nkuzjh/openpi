@@ -8,6 +8,7 @@ import pytest
 
 from openpi.csgo import model as csgo_model
 from openpi.models import model as _model
+from openpi.models import pi0 as _pi0
 
 
 def test_profile_defaults_preserve_legacy_serialization():
@@ -110,6 +111,45 @@ def test_exp32_freeze_filter_leaves_image_connector_and_action_heads_trainable()
         assert module_paths.isdisjoint(frozen_paths)
 
 
+def test_frozen_vl_changes_only_image_connector_trainability():
+    main = csgo_model.CSGOPi0Config(profile="exp32_loc_main")
+    frozen_vl = csgo_model.CSGOPi0Config(profile="exp32_loc_main_frozen_vl")
+    assert dataclasses.asdict(main) == dataclasses.asdict(frozen_vl)
+
+    model = nnx.eval_shape(main.create, jax.random.key(0))
+    all_params = nnx.state(model, nnx.Param).flat_state()
+    all_paths = {"/".join(path) for path in all_params}
+    main_frozen = {
+        "/".join(path) for path in nnx.state(model, nnx.All(nnx.Param, main.get_freeze_filter())).flat_state()
+    }
+    frozen_vl_frozen = {
+        "/".join(path) for path in nnx.state(model, nnx.All(nnx.Param, frozen_vl.get_freeze_filter())).flat_state()
+    }
+    connector = {path for path in all_paths if path.startswith("PaliGemma/img/head/")}
+    assert connector == {"PaliGemma/img/head/kernel", "PaliGemma/img/head/bias"}
+    assert frozen_vl_frozen - main_frozen == connector
+    assert main_frozen - frozen_vl_frozen == set()
+
+
+@pytest.mark.parametrize(
+    ("profile", "expected_train"),
+    [("v2_5k", False), ("exp32_loc_main", True), ("exp32_loc_main_frozen_vl", True)],
+)
+def test_native_training_augmentation_flag_is_profile_specific(monkeypatch, profile, expected_train):
+    calls = []
+
+    def parent_compute_loss(self, rng, observation, actions, *, train=False):
+        del self, rng, observation, actions
+        calls.append(train)
+
+    monkeypatch.setattr(_pi0.Pi0, "compute_loss", parent_compute_loss)
+    model = object.__new__(csgo_model.CSGOPi0)
+    object.__setattr__(model, "profile", profile)
+    model.compute_loss(None, None, None, train=True)
+    model.compute_loss(None, None, None, train=False)
+    assert calls == [expected_train, False]
+
+
 def test_weight_loader_slices_legacy_and_loads_all_32_actions(monkeypatch):
     source_values = {
         "action_in_proj/kernel": np.arange(32 * 4, dtype=np.float32).reshape(32, 4),
@@ -121,7 +161,7 @@ def test_weight_loader_slices_legacy_and_loads_all_32_actions(monkeypatch):
     monkeypatch.setattr(csgo_model.download, "maybe_download", lambda path: path)
     monkeypatch.setattr(_model, "restore_params", lambda path, restore_type: loaded)
 
-    for action_dim, profile in ((5, "v2_5k"), (32, "exp32_loc_main")):
+    for action_dim, profile in ((5, "v2_5k"), (32, "exp32_loc_main"), (32, "exp32_loc_main_frozen_vl")):
         target_values = {
             "action_in_proj/kernel": np.zeros((action_dim, 4), dtype=np.float32),
             "action_in_proj/bias": np.zeros((4,), dtype=np.float32),
