@@ -204,13 +204,21 @@ class Pi0(_model.BaseModel):
 
     @override
     def compute_loss(
-        self, rng: at.KeyArrayLike, observation: _model.Observation, actions: _model.Actions, *, train: bool = False
+        self,
+        rng: at.KeyArrayLike,
+        observation: _model.Observation,
+        actions: _model.Actions,
+        *,
+        train: bool = False,
+        geometric_augmentation: bool = True,
     ) -> at.Float[at.Array, "*b ah"]:
         preprocess_rng, noise_rng, time_rng = jax.random.split(rng, 3)
         # Keep the native flow-noise stream unchanged while deriving an
         # independent stream for PEFT-style adapter dropout.
         dropout_rngs = _dropout_rngs(rng, jnp.asarray(0xC5A0, dtype=jnp.uint32))
-        observation = _model.preprocess_observation(preprocess_rng, observation, train=train)
+        observation = _model.preprocess_observation(
+            preprocess_rng, observation, train=train, geometric_augmentation=geometric_augmentation
+        )
 
         batch_shape = actions.shape[:-2]
         noise = jax.random.normal(noise_rng, actions.shape)

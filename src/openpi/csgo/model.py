@@ -120,9 +120,15 @@ class CSGOPi0(_pi0.Pi0):
         train: bool = False,
     ) -> at.Float[at.Array, "*b ah"]:
         # Preserve the historical label-safe inference preprocessing in the
-        # v2_5k profile. Both 32D experiments use native training augmentation.
+        # v2_5k profile. The frozen-VL experiment keeps only native color jitter.
         native_train = train if self.profile in EXP32_PROFILES else False
-        return super().compute_loss(rng, observation, actions, train=native_train)
+        return super().compute_loss(
+            rng,
+            observation,
+            actions,
+            train=native_train,
+            geometric_augmentation=self.profile != "exp32_loc_main_frozen_vl",
+        )
 
 
 @dataclasses.dataclass(frozen=True)

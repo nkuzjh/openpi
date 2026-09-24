@@ -1,14 +1,17 @@
 import dataclasses
 
+import augmax
 import flax.nnx as nnx
 import flax.traverse_util as traverse_util
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from openpi.csgo import model as csgo_model
 from openpi.models import model as _model
 from openpi.models import pi0 as _pi0
+from openpi.shared import image_tools
 
 
 def test_profile_defaults_preserve_legacy_serialization():
@@ -132,22 +135,95 @@ def test_frozen_vl_changes_only_image_connector_trainability():
 
 
 @pytest.mark.parametrize(
-    ("profile", "expected_train"),
-    [("v2_5k", False), ("exp32_loc_main", True), ("exp32_loc_main_frozen_vl", True)],
+    ("profile", "expected_train", "expected_geometry"),
+    [("v2_5k", False, True), ("exp32_loc_main", True, True), ("exp32_loc_main_frozen_vl", True, False)],
 )
-def test_native_training_augmentation_flag_is_profile_specific(monkeypatch, profile, expected_train):
+def test_native_training_augmentation_flag_is_profile_specific(monkeypatch, profile, expected_train, expected_geometry):
     calls = []
 
-    def parent_compute_loss(self, rng, observation, actions, *, train=False):
+    def parent_compute_loss(self, rng, observation, actions, *, train=False, geometric_augmentation=True):
         del self, rng, observation, actions
-        calls.append(train)
+        calls.append((train, geometric_augmentation))
 
     monkeypatch.setattr(_pi0.Pi0, "compute_loss", parent_compute_loss)
     model = object.__new__(csgo_model.CSGOPi0)
     object.__setattr__(model, "profile", profile)
     model.compute_loss(None, None, None, train=True)
     model.compute_loss(None, None, None, train=False)
-    assert calls == [expected_train, False]
+    assert calls == [(expected_train, expected_geometry), (False, expected_geometry)]
+
+
+def test_frozen_training_preprocess_jitters_fpv_and_radar_without_geometry():
+    resolution = (32, 32)
+    rng = jax.random.key(17)
+    pattern = jnp.linspace(-1.0, 1.0, 32 * 32 * 3, dtype=jnp.float32).reshape(1, 32, 32, 3)
+    fpv = pattern[:, ::2, ::2, :]
+    radar = jnp.flip(pattern, axis=2)
+    state = jnp.arange(32, dtype=jnp.float32)[None, :]
+    tokens = jnp.array([[1, 2, 3]], dtype=jnp.int32)
+    token_mask = jnp.array([[True, True, False]])
+    image_mask = jnp.array([True])
+    obs = _model.Observation(
+        images={"base_0_rgb": fpv, "left_wrist_0_rgb": radar},
+        image_masks={"base_0_rgb": image_mask},
+        state=state,
+        tokenized_prompt=tokens,
+        tokenized_prompt_mask=token_mask,
+    )
+
+    color_only = _model.preprocess_observation(
+        rng,
+        obs,
+        train=True,
+        geometric_augmentation=False,
+        image_keys=("base_0_rgb", "left_wrist_0_rgb"),
+        image_resolution=resolution,
+    )
+    native = _model.preprocess_observation(
+        rng,
+        obs,
+        train=True,
+        image_keys=("base_0_rgb", "left_wrist_0_rgb"),
+        image_resolution=resolution,
+    )
+    eval_obs = _model.preprocess_observation(
+        None,
+        obs,
+        train=False,
+        geometric_augmentation=False,
+        image_keys=("base_0_rgb", "left_wrist_0_rgb"),
+        image_resolution=resolution,
+    )
+    native_eval = _model.preprocess_observation(
+        None, obs, train=False, image_keys=("base_0_rgb", "left_wrist_0_rgb"), image_resolution=resolution
+    )
+
+    resized_fpv = image_tools.resize_with_pad(fpv, *resolution)
+    color_jitter = augmax.Chain(augmax.ColorJitter(brightness=0.3, contrast=0.4, saturation=0.5))
+    color_rng = jax.random.split(rng, 1)
+    for key, original in (("base_0_rgb", resized_fpv), ("left_wrist_0_rgb", radar)):
+        expected = jax.vmap(color_jitter)(color_rng, original / 2.0 + 0.5) * 2.0 - 1.0
+        np.testing.assert_allclose(color_only.images[key], expected, atol=1e-6)
+        assert not np.array_equal(np.asarray(color_only.images[key]), np.asarray(original))
+        np.testing.assert_array_equal(eval_obs.images[key], original)
+        np.testing.assert_array_equal(native_eval.images[key], original)
+
+    native_chain = augmax.Chain(
+        augmax.RandomCrop(int(resolution[1] * 0.95), int(resolution[0] * 0.95)),
+        augmax.Resize(*resolution),
+        augmax.Rotate((-5, 5)),
+        augmax.ColorJitter(brightness=0.3, contrast=0.4, saturation=0.5),
+    )
+    expected_native_fpv = jax.vmap(native_chain)(color_rng, resized_fpv / 2.0 + 0.5) * 2.0 - 1.0
+    np.testing.assert_allclose(native.images["base_0_rgb"], expected_native_fpv, atol=1e-6)
+    assert not np.array_equal(np.asarray(native.images["base_0_rgb"]), np.asarray(color_only.images["base_0_rgb"]))
+    np.testing.assert_array_equal(native.images["left_wrist_0_rgb"], color_only.images["left_wrist_0_rgb"])
+    for processed in (color_only, native, eval_obs, native_eval):
+        np.testing.assert_array_equal(processed.state, state)
+        np.testing.assert_array_equal(processed.tokenized_prompt, tokens)
+        np.testing.assert_array_equal(processed.tokenized_prompt_mask, token_mask)
+        np.testing.assert_array_equal(processed.image_masks["base_0_rgb"], image_mask)
+        np.testing.assert_array_equal(processed.image_masks["left_wrist_0_rgb"], jnp.array([True]))
 
 
 def test_weight_loader_slices_legacy_and_loads_all_32_actions(monkeypatch):

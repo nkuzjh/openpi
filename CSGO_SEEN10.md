@@ -174,10 +174,13 @@ RUN_FULL=1 scripts/run_csgo_seen10.sh eval \
 
 `exp32_loc_main_frozen_vl` adds a control for UniLIP `exp32_loc`: it freezes
 `PaliGemma/img/head` (the vision-to-language projector), whereas
-`exp32_loc_main` trains it. This profile keeps only native Pi0.5 image
-augmentation: FPV crop/resize/rotation and FPV/radar color jitter during
-training. Extra FPV CoarseDropout, GridDropout and RandomErasing are disabled
-(`use_augmentation=False` controls these extra transforms, not native augmentation).
+`exp32_loc_main` trains it. During training, this profile applies only native
+Pi0.5 FPV/radar color jitter (brightness=0.3, contrast=0.4, saturation=0.5).
+FPV random crop and its resize-back, rotation, CoarseDropout, GridDropout and
+RandomErasing are disabled. Standard input resizing to 224×224 is retained;
+validation/inference use no random image augmentation. `use_augmentation=False`
+controls the extra FPV dropout transforms; the profile separately disables
+native geometric augmentation while retaining color jitter.
 LoRA, normalization, effective batch 128 and 19,500 updates remain aligned.
 This profile validates and saves at steps 4,000, 8,000, 12,000,
 16,000 and the final 19,500. `best` links to the saved step with the lowest

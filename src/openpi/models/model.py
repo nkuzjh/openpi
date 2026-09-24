@@ -146,11 +146,13 @@ def preprocess_observation(
     observation: Observation,
     *,
     train: bool = False,
+    geometric_augmentation: bool = True,
     image_keys: Sequence[str] = IMAGE_KEYS,
     image_resolution: tuple[int, int] = IMAGE_RESOLUTION,
 ) -> Observation:
-    """Preprocess the observations by performing image augmentations (if train=True), resizing (if necessary), and
-    filling in a default image mask (if necessary).
+    """Preprocess observations with training augmentation, deterministic resizing, and default image masks.
+
+    ``geometric_augmentation=False`` retains training color jitter while skipping random crop, resize, and rotation.
     """
 
     if not set(image_keys).issubset(observation.images):
@@ -170,7 +172,7 @@ def preprocess_observation(
             image = image / 2.0 + 0.5
 
             transforms = []
-            if "wrist" not in key:
+            if geometric_augmentation and "wrist" not in key:
                 height, width = image.shape[1:3]
                 transforms += [
                     augmax.RandomCrop(int(width * 0.95), int(height * 0.95)),
