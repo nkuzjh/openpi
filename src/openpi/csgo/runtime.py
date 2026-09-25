@@ -812,11 +812,6 @@ def _create_loader(
         include_actions=True,
         limit=max_samples,
     )
-    if split == TRAIN_SPLIT and len(dataset) % batch_size:
-        raise ValueError(
-            "train split length must be divisible by batch_size because the native TorchDataLoader uses drop_last=True; "
-            f"got {len(dataset)} samples and batch_size={batch_size}"
-        )
     model_config = _model_config_from_runtime(config)
     transforms = _native_input_transform(model_config) if input_transform is None else input_transform
     sample_transform = _profile_sample_transform(

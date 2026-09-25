@@ -61,6 +61,21 @@ def test_exp32_smoke_defaults_to_small_batch_and_profile_run_dir(
     )
 
 
+def test_smoke_sample_limit_accepts_partial_tail_but_requires_one_full_batch(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["train_seen10.py", "--smoke", "--batch-size", "128", "--max-train-samples", "130"],
+    )
+    args = train_seen10.parse_args()
+    train_seen10._apply_smoke_defaults(args, profile_name="v2_5k")
+    assert args.max_train_samples == 130
+
+    args.max_train_samples = 127
+    with pytest.raises(SystemExit, match="at least --batch-size"):
+        train_seen10._apply_smoke_defaults(args, profile_name="v2_5k")
+
+
 def test_frozen_vl_cli_paths_and_saved_profile_restore(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch):
     profile = "exp32_loc_main_frozen_vl"
     monkeypatch.setattr(sys, "argv", ["train_seen10.py", "--profile", profile, "--smoke"])

@@ -133,10 +133,8 @@ def _apply_smoke_defaults(args: argparse.Namespace, *, profile_name: str) -> Non
         args.decay_steps = args.num_train_steps
     if args.max_train_samples is None:
         args.max_train_samples = args.batch_size
-    elif args.max_train_samples % args.batch_size:
-        raise SystemExit(
-            "--max-train-samples must be divisible by --batch-size because the smoke train loader drops incomplete batches"
-        )
+    elif args.max_train_samples < args.batch_size:
+        raise SystemExit("--max-train-samples must be at least --batch-size")
     if args.max_validation_samples is None:
         args.max_validation_samples = 1
     # Preserve a user-specified effective size when it matches the explicit

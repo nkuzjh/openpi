@@ -146,6 +146,100 @@ def test_frozen_vl_inherits_exp32_contract_and_formal_enforcement(tmp_path: path
             )
 
 
+@pytest.mark.parametrize("profile", ["exp32_loc_main", "exp32_loc_main_frozen_vl"])
+@pytest.mark.parametrize(("batch_size", "accumulation_steps"), [(32, 4), (64, 2), (128, 1)])
+def test_formal_profiles_accept_aligned_microbatches(
+    tmp_path: pathlib.Path, profile: str, batch_size: int, accumulation_steps: int
+):
+    config = runtime.make_runtime_config(
+        data_root=tmp_path,
+        run_dir=tmp_path / "formal",
+        experiment_profile=profile,
+        batch_size=batch_size,
+        gradient_accumulation_steps=accumulation_steps,
+    )
+    assert config.effective_batch_size == 128
+    assert (config.batch_size, config.gradient_accumulation_steps) == (batch_size, accumulation_steps)
+
+
+@pytest.mark.parametrize("profile", ["exp32_loc_main", "exp32_loc_main_frozen_vl"])
+def test_formal_profiles_reject_other_effective_batch(tmp_path: pathlib.Path, profile: str):
+    with pytest.raises(ValueError, match="requires effective_batch_size=128"):
+        runtime.make_runtime_config(
+            data_root=tmp_path,
+            run_dir=tmp_path / "invalid",
+            experiment_profile=profile,
+            batch_size=32,
+            gradient_accumulation_steps=2,
+        )
+
+
+def test_legacy_profile_keeps_its_batch_contract(tmp_path: pathlib.Path):
+    default = runtime.make_runtime_config(data_root=tmp_path, run_dir=tmp_path / "default")
+    assert (default.batch_size, default.gradient_accumulation_steps, default.effective_batch_size) == (1, 1, 1)
+    larger = runtime.make_runtime_config(
+        data_root=tmp_path,
+        run_dir=tmp_path / "larger",
+        batch_size=32,
+        gradient_accumulation_steps=4,
+    )
+    assert larger.effective_batch_size == 128
+
+
+def test_train_loader_drops_partial_tail_and_resume_replays_full_batches(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+):
+    class FakeSeen10Dataset:
+        def __init__(self, data_root, split, *, shared_eval_dir, include_actions, limit):
+            del data_root, shared_eval_dir
+            assert split == runtime.TRAIN_SPLIT
+            assert include_actions
+            self.size = 130 if limit is None else min(130, limit)
+
+        def __len__(self):
+            return self.size
+
+        def __getitem__(self, index):
+            return {
+                "index": np.asarray(index, dtype=np.int32),
+                "state": np.zeros(5, dtype=np.float32),
+                "actions": np.zeros(5, dtype=np.float32),
+            }
+
+    monkeypatch.setattr(runtime._csgo_data, "Seen10Dataset", FakeSeen10Dataset)
+    monkeypatch.setattr(runtime, "_coerce_batch", lambda value, *, action_dim: value)
+    config = runtime.make_runtime_config(data_root=tmp_path, run_dir=tmp_path / "loader", seed=17)
+    transform = _transforms.CompositeTransform((lambda sample: sample, _transforms.PadStatesAndActions(5)))
+
+    def make_loader():
+        return runtime._create_loader(
+            config,
+            split=runtime.TRAIN_SPLIT,
+            batch_size=128,
+            shuffle=True,
+            max_samples=None,
+            sharding=None,
+            input_transform=transform,
+        )
+
+    expected_iter = iter(make_loader())
+    expected = [np.asarray(next(expected_iter)["index"]) for _ in range(4)]
+    assert all(batch.shape == (128,) and np.unique(batch).size == 128 for batch in expected)
+    assert not np.array_equal(expected[0], expected[1])
+
+    replay_iter = iter(make_loader())
+    first_batch = next(replay_iter)
+    iterator, resumed = runtime._initial_microbatches(
+        replay_iter,
+        first_batch,
+        start_step=2,
+        accumulation_steps=1,
+        action_dim=5,
+    )
+    np.testing.assert_array_equal(resumed[0]["index"], expected[2])
+    np.testing.assert_array_equal(next(iterator)["index"], expected[3])
+
+
 def test_native_transform_and_profile_pipeline_pad_after_normalization(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ):

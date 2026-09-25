@@ -135,7 +135,7 @@ The default `best` output remains `localization` for existing commands.
 ### commands
 ```bash
 # 手动执行命令，等价上面的默认配置。正式训练须保持有效 batch 为 128；
-# 50,000 条 seen_train 数据与 128 都整除的 microbatch 仅可为 1、2、4、8 或 16。
+# 无需整除 50,000 条训练数据；可用 16×8、32×4、64×2 或 128×1（按显存选择）。
 cd /home/jiahao/task/openpi
 export CSGO_PI05_BASE="$PWD/.cache/openpi/openpi-assets/checkpoints/pi05_base/params"
 
@@ -169,6 +169,16 @@ RUN_FULL=1 scripts/run_csgo_seen10.sh eval \
 #     └── evaluation/localization_late/summary_equal_map.json
 ```
 
+
+Microbatch size need not divide the training-set length. Both aligned profiles
+require `batch_size * gradient_accumulation_steps = 128`; for example,
+`--batch-size 32 --gradient-accumulation-steps 4`, `64`/`2`, or `128`/`1`.
+The native loader keeps `drop_last=True`: it discards the incomplete tail batch
+at each epoch boundary and reshuffles for the next epoch, so every optimizer
+update still consumes 128 samples. At batch 128, each 50,000-row epoch yields
+390 full batches and drops 80 rows from that epoch's shuffled order. Increasing
+microbatch size requires sufficient GPU memory. Use the same microbatch and
+accumulation settings when resuming an existing run.
 
 ### Frozen vision-language projector comparison
 
