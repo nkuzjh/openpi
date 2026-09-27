@@ -212,7 +212,7 @@ set -o pipefail
 mkdir -p outputs/csgo_benchmark_v2_seen10/pi0.5_exp32_loc_main_frozen_vl
 RUN_FULL=1 scripts/run_csgo_seen10.sh train \
   --profile exp32_loc_main_frozen_vl --seed 0 \
-  --batch-size 16 --gradient-accumulation-steps 8 --effective-batch-size 128 \
+  --batch-size 64 --gradient-accumulation-steps 2 --effective-batch-size 128 \
   2>&1 | tee outputs/csgo_benchmark_v2_seen10/pi0.5_exp32_loc_main_frozen_vl/seed_0.train.log
 
 RUN_FULL=1 scripts/run_csgo_seen10.sh infer --profile exp32_loc_main_frozen_vl --seed 0 --checkpoint-tag best
